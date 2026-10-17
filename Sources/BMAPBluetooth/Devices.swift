@@ -35,12 +35,16 @@ public struct PairedDevice: Sendable {
 public enum Discovery {
     public static func pairedDevices() -> [PairedDevice]
     {
+        LinkState.prime()
+        LinkState.willEnumerate()
         // pairedDevices() can list the same device more than once.
         var seen = Set<String>()
-        return (IOBluetoothDevice.pairedDevices() ?? [])
+        let devices = (IOBluetoothDevice.pairedDevices() ?? [])
             .compactMap { $0 as? IOBluetoothDevice }
             .map(describe)
             .filter { seen.insert($0.address).inserted }
+        LinkState.enumerated(devices)
+        return devices
     }
 
     /// This Mac's Bluetooth address, to recognise it among the headphones' hosts.
@@ -62,10 +66,11 @@ public enum Discovery {
             guard let n = pnp?.getAttributeDataElement(attribute)?.getNumberValue() else { return nil }
             return n.uint16Value
         }
+        let address = normalizeAddress(device.addressString ?? "")
         return PairedDevice(
             name: device.name ?? device.nameOrAddress ?? "",
-            address: normalizeAddress(device.addressString ?? ""),
-            isConnected: device.isConnected(),
+            address: address,
+            isConnected: LinkState.isConnected(address),
             vendorID: pnpValue(0x0201),
             productID: pnpValue(0x0202) ?? privateProductID(device)
         )
@@ -120,7 +125,7 @@ public enum Discovery {
 public enum Link {
     public static func isConnected(_ address: String) -> Bool
     {
-        Discovery.device(address: address)?.isConnected() ?? false
+        LinkState.isConnected(Discovery.normalizeAddress(address))
     }
 
     /// Brings the baseband link up, paging the device for at most `timeout`
@@ -128,15 +133,16 @@ public enum Link {
     /// audio device on its own afterwards.
     ///
     /// The synchronous -openConnection pages for about 15 s when the device
-    /// is off, and has been seen to report success for a link that was gone
-    /// a moment later, so this uses the asynchronous call and then checks
-    /// that the link is really up.
+    /// is off, so this uses the asynchronous call with a shorter page timeout.
+    /// Success is taken from the completion status: isConnected() cannot be
+    /// trusted once pairedDevices() has run (see LinkState).
     public static func open(_ address: String, timeout: TimeInterval = 8) throws
     {
+        let address = Discovery.normalizeAddress(address)
         guard let device = Discovery.device(address: address) else {
             throw BluetoothError.deviceNotFound(address)
         }
-        if device.isConnected() { return }
+        if isConnected(address) { return }
 
         let waiter = ConnectionWaiter()
         // Page timeout is in baseband slots of 0.625 ms.
@@ -149,24 +155,148 @@ public enum Link {
         while waiter.status == nil, Date() < deadline {
             CFRunLoopRunInMode(.defaultMode, 0.05, true)
         }
-        if let result = waiter.status, result != kIOReturnSuccess {
+        guard let result = waiter.status else {
+            throw BluetoothError.unreachable(kIOReturnTimeout)
+        }
+        guard result == kIOReturnSuccess else {
             throw BluetoothError.unreachable(result)
         }
-        guard device.isConnected() else {
-            throw BluetoothError.unreachable(waiter.status ?? kIOReturnTimeout)
-        }
+        LinkState.record(address, connected: true)
     }
 
     public static func close(_ address: String) throws
     {
+        let address = Discovery.normalizeAddress(address)
         guard let device = Discovery.device(address: address) else {
             throw BluetoothError.deviceNotFound(address)
         }
-        if !device.isConnected() { return }
+        if !isConnected(address) { return }
         let status = device.closeConnection()
         guard status == kIOReturnSuccess else {
             throw BluetoothError.linkFailed(operation: "disconnect", status: status)
         }
+        LinkState.record(address, connected: false)
+    }
+}
+
+/// Whether this Mac's baseband link to a device is up.
+///
+/// IOBluetoothDevice.isConnected() is right until the process first calls
+/// +pairedDevices. That call can list a device twice (seen with the QC Ultra
+/// 2, on macOS 14.3), and it overwrites the shared device object's state with
+/// "not connected" while the link is up; nothing later in the process
+/// corrects it. So the state of every device seen in an earlier run is read
+/// before the first enumeration, and devices never seen before are looked up
+/// in system_profiler, which asks bluetoothd directly.
+public enum LinkState {
+    private static var snapshot: [String: Bool] = [:]
+    private static var primed = false
+    private static var profilerState: [String: Bool]?
+
+    /// Reads the state of every known device. Runs once, and must run before
+    /// anything calls +pairedDevices.
+    public static func prime(_ extra: [String] = [])
+    {
+        for address in extra.map(Discovery.normalizeAddress) where snapshot[address] == nil {
+            snapshot[address] = Discovery.device(address: address)?.isConnected()
+        }
+        guard !primed else { return }
+        primed = true
+        for address in KnownDevices.load() where snapshot[address] == nil {
+            snapshot[address] = Discovery.device(address: address)?.isConnected()
+        }
+    }
+
+    static func isConnected(_ address: String) -> Bool
+    {
+        if let state = snapshot[address] { return state }
+        if !enumeratedOnce {
+            // Nothing has disturbed the device objects yet.
+            let state = Discovery.device(address: address)?.isConnected() ?? false
+            snapshot[address] = state
+            return state
+        }
+        let state = systemProfilerState()[address] ?? false
+        snapshot[address] = state
+        return state
+    }
+
+    static func record(_ address: String, connected: Bool)
+    {
+        snapshot[address] = connected
+    }
+
+    private static var enumeratedOnce = false
+
+    /// From here on, isConnected() is unreliable.
+    static func willEnumerate()
+    {
+        enumeratedOnce = true
+    }
+
+    /// Remembers the Bose devices just enumerated so later runs can snapshot
+    /// them first.
+    static func enumerated(_ devices: [PairedDevice])
+    {
+        KnownDevices.save(devices.filter(\.looksLikeBose).map(\.address))
+    }
+
+    /// Paired devices' connection state according to system_profiler.
+    private static func systemProfilerState() -> [String: Bool]
+    {
+        if let profilerState { return profilerState }
+        var result: [String: Bool] = [:]
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/system_profiler")
+        process.arguments = ["SPBluetoothDataType", "-json"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        if (try? process.run()) != nil {
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            if let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let info = (root["SPBluetoothDataType"] as? [[String: Any]])?.first
+            {
+                for (key, connected) in [("device_connected", true), ("device_not_connected", false)] {
+                    for entry in info[key] as? [[String: Any]] ?? [] {
+                        for case let fields as [String: Any] in entry.values {
+                            if let address = fields["device_address"] as? String {
+                                result[Discovery.normalizeAddress(address)] = connected
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        profilerState = result
+        return result
+    }
+}
+
+/// Addresses of Bose devices seen before, kept in the user's cache directory.
+/// Losing the file only costs one slower lookup.
+enum KnownDevices {
+    static var file: URL
+    {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        return caches.appendingPathComponent("bosectl/known-devices")
+    }
+
+    static func load() -> [String]
+    {
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return [] }
+        return text.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+    }
+
+    static func save(_ addresses: [String])
+    {
+        let known = Set(load())
+        let all = known.union(addresses)
+        guard all != known else { return }
+        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? (all.sorted().joined(separator: "\n") + "\n").write(to: file, atomically: true, encoding: .utf8)
     }
 }
 

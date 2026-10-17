@@ -46,7 +46,7 @@ extension PairedDevice {
     }
 }
 
-struct LinkState: ParsableCommand {
+struct LinkCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "link",
         abstract: "Is this Mac linked to the headphones? Exit 0 if so, 3 if not."

@@ -31,6 +31,8 @@ struct GlobalOptions: ParsableArguments {
     {
         Output.json = json
         Output.configureColor(color)
+        // Before anything lists paired devices; see LinkState.
+        LinkState.prime(mac.map { [$0] } ?? [])
     }
 }
 

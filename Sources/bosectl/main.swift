@@ -28,7 +28,7 @@ struct Bosectl: ParsableCommand {
             FlagCommand<AutoPauseSetting>.self, FlagCommand<AutoAnswerSetting>.self,
             Prompts.self, Buttons.self,
             Source.self, Route.self, Pair.self, PowerOff.self,
-            Devices.self, LinkState.self, Connect.self, Disconnect.self,
+            Devices.self, LinkCommand.self, Connect.self, Disconnect.self,
             Watch.self, Dump.self, Raw.self,
         ]
     )
