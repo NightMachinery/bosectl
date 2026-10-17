@@ -365,10 +365,28 @@ public final class Headphones {
         return echo
     }
 
-    /// Asks the playing host to play, pause, skip and so on.
-    public func media(_ action: MediaAction) throws
+    /// Asks the playing host to play, pause, skip and so on. Returns false
+    /// when there was nothing to act on: the headphones answer "invalid data"
+    /// to a pause with nothing playing, though the payload is a fixed byte.
+    @discardableResult
+    public func media(_ action: MediaAction) throws -> Bool
     {
-        try start(Function.media, [action.rawValue])
+        do {
+            try start(Function.media, [action.rawValue])
+            return true
+        } catch let error as DeviceError where error.code == DeviceErrorCode.invalidData.rawValue {
+            return false
+        }
+    }
+
+    /// Pauses what is playing, or plays what is not. BMAP has neither a
+    /// toggle nor a readable play state, so this pauses first and plays only
+    /// if there was nothing to pause. Returns the action that took effect, or
+    /// nil when neither did.
+    public func toggleMedia() throws -> MediaAction?
+    {
+        if try media(.pause) { return .pause }
+        return try media(.play) ? .play : nil
     }
 
     public func source() throws -> AudioSource

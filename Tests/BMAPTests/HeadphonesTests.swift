@@ -28,6 +28,29 @@ final class FakeDevice: Requester {
     }
 }
 
+/// Answers each request with the next operator in `answers`, an ERROR being
+/// "invalid data". FakeDevice gives every request to an address the same
+/// replies; media actions need a different answer per request.
+final class ScriptedMedia: Requester {
+    var answers: [Operator]
+    var sent: [Packet] = []
+
+    init(answers: [Operator])
+    {
+        self.answers = answers
+    }
+
+    func request(_ packet: Packet, accept: Set<Address>, collect: Collect, timeout: TimeInterval) throws -> [Packet]
+    {
+        sent.append(packet)
+        let op = answers.removeFirst()
+        let payload = op == .error ? [DeviceErrorCode.invalidData.rawValue] : []
+        var collector = AnswerCollector(request: packet, accept: accept, collect: collect)
+        _ = try collector.feed(Packet(packet.address, op, payload))
+        return collector.answers
+    }
+}
+
 /// A 48-byte mode record as the headphones list it.
 func modeRecord(
     index: UInt8, name: String, editable: Bool, cnc: UInt8 = 0, wind: Bool = false, anc: Bool = true, favorite: Bool = false
@@ -142,6 +165,38 @@ final class HeadphonesTests: XCTestCase {
         XCTAssertThrowsError(try Headphones(fake).writeMode(.empty(index: 0))) { error in
             XCTAssertEqual((error as? DeviceError)?.code, 8)
         }
+    }
+
+    func testMediaWithNothingPlayingIsNotAnError()
+    {
+        let fake = FakeDevice()
+        fake.reply(Function.media, .error, [0x06])
+        XCTAssertEqual(try Headphones(fake).media(.pause), false)
+
+        let busy = FakeDevice()
+        busy.reply(Function.media, .error, [0x05])
+        XCTAssertThrowsError(try Headphones(busy).media(.pause))
+
+        let playing = FakeDevice()
+        playing.reply(Function.media, .result, [])
+        XCTAssertEqual(try Headphones(playing).media(.pause), true)
+        XCTAssertEqual(playing.sent.first?.payload, [0x02])
+    }
+
+    func testToggleMediaPausesFirstAndPlaysOnlyIfNothingWasPlaying()
+    {
+        let playing = FakeDevice()
+        playing.reply(Function.media, .result, [])
+        XCTAssertEqual(try Headphones(playing).toggleMedia(), .pause)
+        XCTAssertEqual(playing.sent.map(\.payload), [[0x02]])
+
+        // The pause finds nothing playing; the play that follows succeeds.
+        let paused = ScriptedMedia(answers: [.error, .result])
+        XCTAssertEqual(try Headphones(paused).toggleMedia(), .play)
+        XCTAssertEqual(paused.sent.map(\.payload), [[0x02], [0x01]])
+
+        let idle = ScriptedMedia(answers: [.error, .error])
+        XCTAssertNil(try Headphones(idle).toggleMedia())
     }
 
     func testSettingsPayloads()

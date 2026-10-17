@@ -70,7 +70,7 @@ bosectl spatial head                   # off, room or head
 
 # audio
 bosectl volume 12                      # also: volume up, volume down 3
-bosectl media pause                    # play, pause, next, previous, stop
+bosectl media toggle                   # also: play, pause, next, previous, stop
 bosectl eq 3 0 -2                      # bass mid treble; 'eq flat' resets
 bosectl eq --treble -1
 
@@ -195,8 +195,9 @@ address. =bosectl devices= lists what is paired.
 - *Automatic noise level* (ActiveSense) belongs to the aware preset. The
   firmware refuses it on custom modes.
 - *=media=* reaches the host through the headphones, as their own buttons do.
-  It has only been tried with nothing playing, when the headphones answer
-  "invalid data".
+  BMAP has no toggle and no readable play state, so =media toggle= pauses
+  first and plays only when the headphones answer that nothing was playing.
+  Pausing or stopping with nothing playing succeeds and changes nothing.
 - *=power-off= is a shutdown.* Nothing can turn the headphones back on
   remotely.
 - *Bluetooth permission.* Command-line tools inherit the Bluetooth permission

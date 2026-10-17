@@ -158,9 +158,11 @@ the one that starts playing takes over.
   (1 Bluetooth, 2 aux) or the number of addresses; with one Bluetooth host the
   two readings agree, so =bosectl= takes every whole address that follows.
 - 5.3 media control: START =[action]=, 0 stop, 1 play, 2 pause, 3 next, 4
-  previous. A GET returns the supported actions as a bit mask. With nothing
-  playing the headphones answer "invalid data"; behaviour during playback is
-  untested.
+  previous. A GET returns the supported actions as a bit mask. During
+  playback a pause pauses; with nothing playing it answers "invalid data",
+  though the payload is the same. There is no toggle action and no readable
+  play state, so =bosectl media toggle= sends a pause and falls back to play
+  on that error.
 - 5.4 codec, read only.
 - 5.5 volume: GET and SETGET answer =[max, level]=; SETGET takes =[level]=. The
   level is the AVRCP absolute volume, so it moves with the Mac's own volume
@@ -254,7 +256,6 @@ Three firmware rules surfaced along the way:
 * What is not known yet
 
 - Which byte of 2.2 reports charging.
-- Whether 5.3 controls playback while something is playing.
 - The unknown bytes in the mode record, 5.1 and 4.5.
 - How much of this holds on other BMAP headphones. The function numbers are
   shared across Bose's recent models; payload details may not be.
