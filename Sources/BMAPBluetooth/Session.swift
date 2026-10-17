@@ -9,7 +9,7 @@ import BMAP
 import Foundation
 import IOBluetooth
 
-public final class Session: NSObject, IOBluetoothRFCOMMChannelDelegate {
+public final class Session: NSObject, IOBluetoothRFCOMMChannelDelegate, Requester {
     public let address: String
     public private(set) var channelID: UInt8 = 0
 
@@ -57,46 +57,26 @@ public final class Session: NSObject, IOBluetoothRFCOMMChannelDelegate {
 
     // MARK: Requests
 
-    /// How a request decides it has its answer.
-    public enum Collect {
-        /// The first terminal packet for the address.
-        case one
-        /// Every packet for the address until the device goes quiet. Used by
-        /// functions that answer with one STATUS per item.
-        case untilQuiet(TimeInterval)
-    }
-
-    /// Sends `packet` and returns the device's answer for the same address.
-    /// An ERROR answer throws `DeviceError`.
-    @discardableResult
-    public func request(_ packet: Packet, collect: Collect = .one, timeout: TimeInterval = 3) throws -> [Packet]
+    public func request(_ packet: Packet, accept: Set<Address>, collect: Collect, timeout: TimeInterval) throws -> [Packet]
     {
         notifications.append(contentsOf: received)
         received.removeAll()
         try write(packet)
 
-        var answers: [Packet] = []
+        var collector = AnswerCollector(request: packet, accept: accept, collect: collect)
         var deadline = Date().addingTimeInterval(timeout)
         while true {
             while !received.isEmpty {
                 let p = received.removeFirst()
-                guard p.address == packet.address else {
+                switch try collector.feed(p) {
+                case .unrelated:
                     notifications.append(p)
-                    continue
-                }
-                switch p.op {
-                case .processing:
-                    // The device acknowledged and is working on it.
-                    deadline = Date().addingTimeInterval(timeout)
-                case .error:
-                    throw DeviceError(request: packet, response: p)
-                default:
-                    answers.append(p)
-                    if case .one = collect {
-                        return answers
-                    }
-                    if case .untilQuiet(let quiet) = collect {
+                case .progress:
+                    if collector.done { return collector.answers }
+                    if case .all(let quiet) = collect, !collector.answers.isEmpty {
                         deadline = Date().addingTimeInterval(quiet)
+                    } else {
+                        deadline = Date().addingTimeInterval(timeout)
                     }
                 }
             }
@@ -104,7 +84,7 @@ public final class Session: NSObject, IOBluetoothRFCOMMChannelDelegate {
                 throw BluetoothError.closedByPeer
             }
             if Date() >= deadline {
-                if !answers.isEmpty { return answers }
+                if case .all = collect, !collector.answers.isEmpty { return collector.answers }
                 throw BluetoothError.timeout("a reply to \(packet.address) \(packet.op.name)")
             }
             pump(until: deadline)
@@ -221,18 +201,5 @@ public final class Session: NSObject, IOBluetoothRFCOMMChannelDelegate {
     public func rfcommChannelClosed(_ rfcommChannel: IOBluetoothRFCOMMChannel!)
     {
         closed = true
-    }
-}
-
-/// The device answered a request with an ERROR packet.
-public struct DeviceError: Error, CustomStringConvertible {
-    public var request: Packet
-    public var response: Packet
-
-    public var code: UInt8 { response.errorCode ?? 0 }
-
-    public var description: String
-    {
-        "the headphones rejected \(request.address) \(request.op.name): \(DeviceErrorCode.describe(code))"
     }
 }
