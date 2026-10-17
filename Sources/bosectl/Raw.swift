@@ -27,7 +27,7 @@ struct Raw: ParsableCommand {
     {
         global.apply()
         let packet = try parsePacket()
-        let frames: [(Bool, Packet)] = try withSession(global) { session, _ in
+        let frames: [(Bool, Packet)] = try withChannel(global) { session, _ in
             var log: [(Bool, Packet)] = []
             let previous = session.onTraffic
             session.onTraffic = { outgoing, p in

@@ -26,14 +26,16 @@ The first write on a fresh channel sometimes fails with =kIOReturnUnderrun=. A
 refused write sends nothing, so retrying it is safe; =bosectl= tries four
 times, 0.1 s apart and lengthening.
 
-The headphones serve one control session at a time, across hosts: while a
-linked phone (presumably the Bose app) held it, every attempt from the Mac
-failed the same way until the phone's Bluetooth went off, and the headphones
-stopped advertising meanwhile. While one process holds the channel, another
-on the same Mac fails to open it with =kIOReturnError=
-(0xe00002bc), at least at first: retried for a second or two, it sometimes
-gets through and sometimes does not. The same code shows up briefly after a
-session closes, which is why opening is retried.
+The headphones serve one RFCOMM control session at a time, across hosts: while
+a linked phone (presumably the Bose app) held it, every attempt from the Mac
+failed with =kIOReturnError= (0xe00002bc). The BMAP service over Bluetooth LE
+is separate and still let the Mac in (see below). Once the headphones stopped
+advertising while the phone held them; another time they kept advertising.
+While one process holds the channel, another on the same Mac fails to open it
+the same way, about 5 s after asking, at least at first: retried for a second
+or two, it sometimes gets through and sometimes does not. The same code shows
+up briefly after a session closes, which is why =bosectl= tries the RFCOMM
+channel once more when LE fails after a refusal.
 
 * Framing
 
@@ -317,7 +319,11 @@ Using LE needs no Classic link and never moves the Mac's audio. An LE
 connection from the Mac sometimes fails to come up right after a Classic
 session; trying again a moment later worked.
 
-The Bluetooth LE route is experimental and hidden behind =--le=.
+While a phone held the RFCOMM channel, and while another =bosectl= process
+held it, LE still connected, and reads and checked writes worked. =bosectl=
+falls back to LE when the RFCOMM channel is refused, and =--le= uses it from
+the start. Both can be open at once: settings changed over RFCOMM were pushed to a
+subscriber on LE.
 
 * What is not known yet
 

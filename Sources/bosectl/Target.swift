@@ -27,8 +27,7 @@ struct GlobalOptions: ParsableArguments {
     @Option(name: .long, help: ArgumentHelp("Seconds to wait for each reply.", valueName: "seconds"))
     var timeout: Double = 3
 
-    /// Experimental: BMAP over Bluetooth LE instead of the Classic channel.
-    @Flag(name: .long, help: .hidden)
+    @Flag(name: .long, help: "Use Bluetooth LE for the control channel, not the Classic one.")
     var le = false
 
     func apply()
@@ -76,10 +75,84 @@ struct Target {
     var isLinked: Bool { Link.isConnected(device.address) }
 }
 
-/// Opens a session to the target and runs `body`. Never brings the link up
-/// on its own: without --auto-connect a disconnected target fails at once
-/// with exit status 3.
-func withSession<T>(_ options: GlobalOptions, _ body: (Session, Target) throws -> T) throws -> T
+/// Opens the control channel and runs `body`: the Classic RFCOMM channel, or
+/// Bluetooth LE with --le or when another client holds the Classic one. Never
+/// brings the link up on its own: without --auto-connect a disconnected target
+/// fails at once with exit status 3, and LE is not tried.
+func withChannel<T>(_ options: GlobalOptions, _ body: (any ControlChannel, Target) throws -> T) throws -> T
+{
+    do {
+        if options.le { return try withLESession(options, body) }
+        do {
+            return try withSession(options) { try body($0, $1) }
+        } catch let busy as ChannelBusy {
+            // A refusal takes the stack about 5 s to report, so rather than
+            // ask again at once, try LE (1 to 2 s), and the Classic channel
+            // once more only if LE fails: the refusal is sometimes brief.
+            Output.note("\(busy.error); trying Bluetooth LE")
+            do {
+                return try withLESession(options, body)
+            } catch let unreachable as LEUnreachable {
+                Output.note("Bluetooth LE did not work (\(unreachable.reason)); trying the Classic channel again")
+                do {
+                    return try withSession(options) { try body($0, $1) }
+                } catch let again as ChannelBusy {
+                    throw Failure(
+                        "\(again.error), and Bluetooth LE did not work either; "
+                            + "another client may hold the channel: a running 'bosectl watch', "
+                            + "or a linked phone (close the Bose app or turn off the phone's Bluetooth)"
+                    )
+                }
+            }
+        }
+    } catch let unreachable as LEUnreachable {
+        throw Failure("over Bluetooth LE: \(unreachable.reason)")
+    }
+}
+
+/// The Classic channel would not open, though the link is up. No request
+/// was sent on it, so trying another way cannot repeat one.
+private struct ChannelBusy: Error {
+    var error: BluetoothError
+}
+
+/// Connecting over Bluetooth LE failed, before any request.
+private struct LEUnreachable: Error {
+    var reason: String
+}
+
+/// BMAP over Bluetooth LE. It needs no Classic link and never takes the Mac's
+/// audio.
+private func withLESession<T>(_ options: GlobalOptions, _ body: (any ControlChannel, Target) throws -> T) throws -> T
+{
+    let target = try Target.resolve(options)
+    let session: LESession
+    do {
+        session = try LESession(
+            name: target.device.name.isEmpty ? nil : target.device.name,
+            onNote: options.trace ? { Output.trace("LE: " + $0) } : nil
+        )
+    } catch {
+        throw LEUnreachable(reason: "\(error)")
+    }
+    defer { session.close() }
+    if options.trace {
+        session.onTraffic = { outgoing, packet in Output.trace((outgoing ? "-> " : "<- ") + packet.description) }
+        session.onRaw = { Output.trace("LE raw: " + $0) }
+    }
+    do {
+        return try body(session, target)
+    } catch let error as BluetoothError {
+        throw Failure("over Bluetooth LE: \(error)")
+    } catch let error as LEError {
+        throw Failure("over Bluetooth LE: \(error)")
+    } catch let error as DeviceError {
+        throw Failure(error.description)
+    }
+}
+
+/// The Classic RFCOMM channel.
+private func withSession<T>(_ options: GlobalOptions, _ body: (Session, Target) throws -> T) throws -> T
 {
     let target = try Target.resolve(options)
     if !target.isLinked {
@@ -93,8 +166,8 @@ func withSession<T>(_ options: GlobalOptions, _ body: (Session, Target) throws -
         try Link.open(target.device.address)
     }
 
-    // The channel can be briefly unavailable right after the link comes up or
-    // after another client lets go of it, so opening is retried.
+    // The channel can be briefly unavailable right after the link comes up,
+    // so opening is retried. A refused open is left to withChannel.
     let attempts = 3
     var lastError: Error?
     for attempt in 1 ... attempts {
@@ -110,7 +183,9 @@ func withSession<T>(_ options: GlobalOptions, _ body: (Session, Target) throws -
         } catch let error as BluetoothError {
             lastError = error
             switch error {
-            case .channelOpenFailed, .timeout, .closedByPeer:
+            case .channelOpenFailed:
+                throw ChannelBusy(error: error)
+            case .timeout, .closedByPeer:
                 if attempt < attempts {
                     Output.note("\(error); retrying (\(attempt)/\(attempts - 1))")
                     Thread.sleep(forTimeInterval: 0.5 * Double(attempt))
@@ -118,13 +193,6 @@ func withSession<T>(_ options: GlobalOptions, _ body: (Session, Target) throws -
                 }
             default:
                 break
-            }
-            if case .channelOpenFailed = error {
-                // What it usually is in practice, and the error code says nothing.
-                throw Failure(
-                    "\(error); another client may hold it: a running 'bosectl watch', "
-                        + "or a linked phone (close the Bose app or turn off the phone's Bluetooth)"
-                )
             }
             throw Failure(error.description)
         } catch let error as DeviceError {

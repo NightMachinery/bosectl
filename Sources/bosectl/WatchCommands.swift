@@ -12,7 +12,8 @@ struct Watch: ParsableCommand {
         The headphones report changes made elsewhere (the buttons, the Bose app,
         another host) on the open channel. This keeps the channel open and
         prints each report, decoded where the layout is known. It holds the
-        control channel for as long as it runs.
+        Classic control channel for as long as it runs (other commands then
+        go over Bluetooth LE).
         """
     )
 
@@ -29,7 +30,7 @@ struct Watch: ParsableCommand {
         global.apply()
         signal(SIGINT) { _ in watchInterrupted = true }
         signal(SIGTERM) { _ in watchInterrupted = true }
-        try withSession(global) { session, _ in
+        try withChannel(global) { session, _ in
             let hp = Headphones(session, timeout: global.timeout)
             do { try hp.subscribe(blocks: Watch.blocks) }
             catch { throw Failure("could not subscribe to notifications: \(error)") }

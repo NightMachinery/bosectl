@@ -159,7 +159,7 @@ under =--json=. The exit status says what happened: =0= success, =1= failure,
 =2= usage error, =3= the headphones are not connected to this Mac.
 
 Global options (=--json=, =--mac=, =--device=, =--timeout=, =--trace=,
-=--auto-connect=, =--color=) may go before or after the command.
+=--auto-connect=, =--le=, =--color=) may go before or after the command.
 
 ** Settings files
 
@@ -228,12 +228,17 @@ address. =bosectl devices= lists what is paired.
 
 * Things to know
 
-- *One control session at a time, across hosts.* While =watch= runs, other
-  =bosectl= commands may fail to open the channel; stop the watch first. A
-  linked phone can hold it too: with the Bose app active on one, every command
-  failed with "could not open the BMAP channel" until the phone's Bluetooth
-  went off. The headphones also stop advertising while a phone holds a
-  Bluetooth LE connection to them, so =nearby= hears nothing then.
+- *The Classic control channel takes one client at a time, across hosts.* A
+  running =watch=, or a phone with the Bose app active, holds it, and the
+  headphones refuse it to everyone else. =bosectl= then says so on stderr and
+  goes over Bluetooth LE instead, which the headphones serve separately: with
+  the Bose app active on a phone, commands still worked that way. The
+  Bluetooth stack takes about 5 s to report the refusal, so such a command
+  takes about 7 s. =--le= skips the Classic channel; it needs no Classic link
+  to this Mac and never moves its audio. If LE fails too, close the Bose app
+  or turn off the phone's Bluetooth. Once, the headphones stopped advertising
+  while a phone held them, so neither LE nor =nearby= could find them; another
+  time they kept advertising.
 - *Voice prompts are read-only on firmware 10.12.12.* The headphones
   acknowledge a change and keep the old value; =prompts= then fails rather
   than report success. Every write is checked this way: the headphones echo
