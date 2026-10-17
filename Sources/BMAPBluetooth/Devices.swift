@@ -43,6 +43,12 @@ public enum Discovery {
             .filter { seen.insert($0.address).inserted }
     }
 
+    /// This Mac's Bluetooth address, to recognise it among the headphones' hosts.
+    public static func hostAddress() -> String?
+    {
+        IOBluetoothHostController.default()?.addressAsString().map(normalizeAddress)
+    }
+
     public static func device(address: String) -> IOBluetoothDevice?
     {
         IOBluetoothDevice(addressString: normalizeAddress(address))
