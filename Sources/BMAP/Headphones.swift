@@ -481,9 +481,22 @@ public final class Headphones {
 
     // MARK: Pairing and power
 
-    public func enterPairingMode() throws
+    /// Whether the headphones are discoverable for pairing.
+    public func pairingMode() throws -> Bool
     {
-        try start(Function.pairingMode, [0x01])
+        let p = try get(Function.pairingMode)
+        try require(p, 1, Function.pairingMode)
+        return p[0] != 0
+    }
+
+    /// Enters or leaves pairing mode. Entering it drops the second of two
+    /// linked hosts, to make room. The RESULT is [state, 1].
+    public func setPairingMode(_ on: Bool) throws
+    {
+        let answers = try start(Function.pairingMode, [on ? 0x01 : 0x00])
+        if let state = answers.last(where: { $0.op == .result })?.payload.first {
+            try confirm((state != 0) == on, Function.pairingMode)
+        }
     }
 
     public func powerOff() throws

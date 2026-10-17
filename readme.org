@@ -88,6 +88,11 @@ bosectl hosts                          # which are linked, which is playing
 bosectl hosts disconnect phone         # by name substring or address
 bosectl hosts connect phone
 
+# pairing and power
+bosectl pair                           # discoverable; drops the second host
+bosectl pair off
+bosectl power-off                      # turning them on again is up to you
+
 # this Mac's own link
 bosectl link                           # exit 0 if linked, 3 if not
 bosectl connect

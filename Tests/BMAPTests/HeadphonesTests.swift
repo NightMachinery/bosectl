@@ -209,6 +209,25 @@ final class HeadphonesTests: XCTestCase {
         XCTAssertEqual(playing.sent.first?.payload, [0x02])
     }
 
+    func testPairingModeOnAndOff()
+    {
+        // Captured: entering answers PROCESSING, then RESULT [state, 1].
+        let entering = FakeDevice()
+        entering.reply(Function.pairingMode, .processing, [])
+        entering.reply(Function.pairingMode, .result, [0x01, 0x01])
+        XCTAssertNoThrow(try Headphones(entering).setPairingMode(true))
+        XCTAssertEqual(entering.sent, [Packet(Function.pairingMode, .start, [0x01])])
+
+        let leaving = FakeDevice()
+        leaving.reply(Function.pairingMode, .result, [0x00, 0x01])
+        XCTAssertNoThrow(try Headphones(leaving).setPairingMode(false))
+        XCTAssertEqual(leaving.sent.first?.payload, [0x00])
+
+        let stuck = FakeDevice()
+        stuck.reply(Function.pairingMode, .result, [0x01, 0x01])
+        XCTAssertThrowsError(try Headphones(stuck).setPairingMode(false))
+    }
+
     func testToggleMediaPausesFirstAndPlaysOnlyIfNothingWasPlaying()
     {
         let playing = FakeDevice()

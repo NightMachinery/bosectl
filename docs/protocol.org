@@ -154,7 +154,10 @@ numbered from 0; =?= marks bytes whose meaning is unknown.
   up to 15 s by default.
 - 4.2 disconnect a host: START =[address]=, answered with PROCESSING.
   Disconnecting the Mac that asks is pointless: macOS pages straight back.
-- 4.8 pairing mode: START =[0x01]=.
+- 4.8 pairing mode: GET =[state]=; START =[1]= enters it and =[0]= leaves it,
+  answered with PROCESSING and then RESULT =[state, 1]=. Entering it drops the
+  second of two linked hosts, presumably to free a slot; this Mac kept its
+  link and the phone was the one dropped.
 
 Commonly listed but absent here: 4.12, routing audio to a chosen host. START
 =[0x82, address]= answers "function not supported". With two hosts linked,

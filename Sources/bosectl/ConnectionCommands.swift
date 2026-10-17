@@ -189,16 +189,29 @@ struct HostsDisconnect: ParsableCommand {
 
 struct Pair: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Put the headphones in pairing mode so another device can pair."
+        abstract: "Put the headphones in pairing mode so another device can pair, or take them out of it.",
+        discussion: """
+            Entering pairing mode drops the second of two linked hosts, to make room; \
+            'bosectl hosts connect' brings it back.
+            """
     )
 
     @OptionGroup var global: GlobalOptions
 
+    @Argument(help: "on (the default), off, or status.")
+    var state = "on"
+
     func run() throws
     {
         global.apply()
-        try withHeadphones(global) { hp, _ in try hp.enterPairingMode() }
-        Output.emit(.object([("pairing", .bool(true))])) { "pairing mode on" }
+        let on: Bool
+        if state.lowercased() == "status" {
+            on = try withHeadphones(global) { hp, _ in try hp.pairingMode() }
+        } else {
+            on = try parseSwitch(state, "pair")
+            try withHeadphones(global) { hp, _ in try hp.setPairingMode(on) }
+        }
+        Output.emit(.object([("pairing", .bool(on))])) { "pairing mode \(on ? "on" : "off")" }
     }
 }
 
