@@ -158,6 +158,32 @@ final class HeadphonesTests: XCTestCase {
         XCTAssertNil(Battery.parse([]).percent)
     }
 
+    func testChargingComesFromTheChargerFunction()
+    {
+        // Captured on the cable and off it: the battery reply is the same.
+        let charging = FakeDevice()
+        charging.reply(Function.battery, .status, [0x14, 0xff, 0xff, 0x00])
+        charging.reply(Function.charger, .status, [0x01])
+        XCTAssertEqual(try Headphones(charging).battery().charging, .yes)
+
+        let unplugged = FakeDevice()
+        unplugged.reply(Function.battery, .status, [0x14, 0xff, 0xff, 0x00])
+        unplugged.reply(Function.charger, .status, [0x00])
+        XCTAssertEqual(try Headphones(unplugged).battery().charging, .no)
+
+        var full = Battery.parse([0x64, 0xff, 0xff, 0x00])
+        full.charger = true
+        XCTAssertEqual(full.charging, .complete)
+
+        // A model without 2.5 still reports its level.
+        let older = FakeDevice()
+        older.reply(Function.battery, .status, [0x28])
+        older.reply(Function.charger, .error, [0x04])
+        let battery = try? Headphones(older).battery()
+        XCTAssertEqual(battery?.percent, 40)
+        XCTAssertEqual(battery?.charging, .unknown)
+    }
+
     func testErrorRepliesThrow()
     {
         let fake = FakeDevice()

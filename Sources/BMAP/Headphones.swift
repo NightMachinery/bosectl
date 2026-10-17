@@ -92,9 +92,21 @@ public final class Headphones {
 
     // MARK: Battery
 
+    /// The level and, where the model reports it, whether it is charging.
     public func battery() throws -> Battery
     {
-        Battery.parse(try get(Function.battery))
+        var battery = Battery.parse(try get(Function.battery))
+        // A model without 2.5 still has a level to report.
+        battery.charger = try? charger()
+        return battery
+    }
+
+    /// Whether a charging cable is connected.
+    public func charger() throws -> Bool
+    {
+        let p = try get(Function.charger)
+        try require(p, 1, Function.charger)
+        return p[0] != 0
     }
 
     // MARK: Settings block
@@ -480,11 +492,27 @@ public final class Headphones {
     }
 }
 
-/// The battery reply. The QC Ultra 2 sends its level in the first byte.
+/// The battery reply. The QC Ultra 2 sends its level in the first byte, and
+/// nothing about charging; that comes from 2.5.
 public struct Battery: Equatable, Sendable {
     /// nil when the headphones report no reading (0xFF).
     public var percent: Int?
     public var raw: [UInt8]
+    /// Whether a charging cable is connected; nil when unread.
+    public var charger: Bool? = nil
+
+    public enum Charging: String, Sendable {
+        case unknown, no, yes, complete
+    }
+
+    /// The cable says power is there, not that the cell is filling, so a
+    /// full battery on the cable counts as complete.
+    public var charging: Charging
+    {
+        guard let charger else { return .unknown }
+        guard charger else { return .no }
+        return percent == 100 ? .complete : .yes
+    }
 
     public static func parse(_ payload: [UInt8]) -> Battery
     {

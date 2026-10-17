@@ -137,7 +137,9 @@ bosectl --json hosts | jq -r '.hosts[] | select(.playing) | .name'
 
 =level_percent= is =null= when the headphones report no level. In =jq=,
 =null < 35= is true, so guard on =null= before comparing against a threshold.
-=charging= is ="unknown"= until the byte that carries it is confirmed.
+=charging= is ="yes"= while the cable is in, ="complete"= when it is in and
+the level is 100, ="no"= otherwise, and ="unknown"= on a model that does not
+say.
 
 Diagnostics go to stderr, as plain text normally and as ={"error": "..."}=
 under =--json=. The exit status says what happened: =0= success, =1= failure,

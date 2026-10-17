@@ -33,11 +33,17 @@ struct Watch: ParsableCommand {
             let hp = Headphones(session, timeout: global.timeout)
             do { try hp.subscribe(blocks: Watch.blocks) }
             catch { throw Failure("could not subscribe to notifications: \(error)") }
+            // A battery report carries no charging state; it comes from 2.5,
+            // which is pushed only when it changes, so start from a reading.
+            var charger = try? hp.charger()
             let previous = session.onTraffic
             session.onTraffic = { outgoing, packet in
                 previous?(outgoing, packet)
                 guard !outgoing else { return }
-                print(eventJSON(packet).serialized())
+                if packet.op == .status, packet.address == Function.charger, let byte = packet.payload.first {
+                    charger = byte != 0
+                }
+                print(eventJSON(packet, charger: charger).serialized())
                 fflush(stdout)
             }
             let end = duration.map { Date().addingTimeInterval($0) } ?? .distantFuture
@@ -55,14 +61,15 @@ struct Watch: ParsableCommand {
 var watchInterrupted = false
 
 /// A received packet as JSON, with a decoded `value` where the layout is known.
-func eventJSON(_ packet: Packet) -> JSON
+/// `charger` completes a battery report, which does not say it is charging.
+func eventJSON(_ packet: Packet, charger: Bool? = nil) -> JSON
 {
     var fields: [(String, JSON)] = [
         ("time", .string(ISO8601DateFormatter().string(from: Date()))),
         ("address", .string(packet.address.description)),
         ("op", .string(packet.op.name)),
     ]
-    if let (name, value) = decode(packet) {
+    if let (name, value) = decode(packet, charger: charger) {
         fields.append(("event", .string(name)))
         fields.append(("value", value))
     }
@@ -70,13 +77,17 @@ func eventJSON(_ packet: Packet) -> JSON
     return .object(fields)
 }
 
-private func decode(_ packet: Packet) -> (String, JSON)?
+private func decode(_ packet: Packet, charger: Bool?) -> (String, JSON)?
 {
     guard packet.op == .status else { return nil }
     let p = packet.payload
     switch packet.address {
     case Function.battery:
-        return ("battery", Battery.parse(p).json)
+        var battery = Battery.parse(p)
+        battery.charger = charger
+        return ("battery", battery.json)
+    case Function.charger:
+        return p.first.map { ("charger", .bool($0 != 0)) }
     case Function.currentMode:
         guard let index = p.first else { return nil }
         if index == Presets.noMode { return ("mode", .object([("index", .null), ("preset", .null)])) }
@@ -127,7 +138,7 @@ struct Dump: ParsableCommand {
         ("buttons", Function.buttons), ("multipoint", Function.multipoint),
         ("sidetone", Function.sidetone), ("auto pause", Function.autoPause),
         ("auto answer", Function.autoAnswer), ("battery", Function.battery),
-        ("hosts", Function.hosts), ("own address", Function.ownAddress),
+        ("charger", Function.charger), ("hosts", Function.hosts), ("own address", Function.ownAddress),
         ("source", Function.source), ("media", Function.media), ("codec", Function.codec),
         ("volume", Function.volume), ("codename", Function.codename), ("platform", Function.platform),
         ("current mode", Function.currentMode), ("favorites", Function.favorites),

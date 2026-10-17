@@ -24,6 +24,8 @@ public enum Function {
 
     // Block 2: status
     public static let battery = Address(2, 2)
+    /// [1 while a charging cable is connected, else 0]; pushed on change.
+    public static let charger = Address(2, 5)
 
     // Block 4: device management (the hosts the headphones remember)
     public static let connectHost = Address(4, 1)

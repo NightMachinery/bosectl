@@ -131,9 +131,14 @@ numbered from 0; =?= marks bytes whose meaning is unknown.
 
 ** Block 2: status
 
-- 2.2 battery. Byte 0 is the level in percent; 0xFF means no reading. Which of
-  the following bytes says the headphones are charging has not been confirmed
-  on a charging set, so =bosectl= reports charging as unknown.
+- 2.2 battery: =[level, 0xff, 0xff, 0x00]=. The level is in percent, and
+  0xFF means no reading. The other three bytes stay the same on the cable and
+  off it. Every level seen so far has been a multiple of 10.
+- 2.5 charger: =[1]= while a charging cable is connected, =[0]= otherwise.
+  Pushed when it changes, and it bounces as the plug goes in (=01 00 01=
+  within a second). It says the cable is there, not that the battery is
+  filling, so =bosectl= reports a full battery on the cable as charged.
+  Each of its pushes has arrived twice; battery pushes arrive once.
 
 ** Block 4: the hosts the headphones remember
 
@@ -257,7 +262,6 @@ Three firmware rules surfaced along the way:
 
 * What is not known yet
 
-- Which byte of 2.2 reports charging.
 - The unknown bytes in the mode record, 5.1 and 4.5.
 - How much of this holds on other BMAP headphones. The function numbers are
   shared across Bose's recent models; payload details may not be.
