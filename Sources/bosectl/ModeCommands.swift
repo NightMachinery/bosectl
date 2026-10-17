@@ -227,3 +227,97 @@ struct SpatialCommand: ParsableCommand {
         try activeModeCommand(global, spatial.map { s in { $0.spatial = s.rawValue } })
     }
 }
+
+// MARK: Favorites
+
+struct FavoritesCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "favorites",
+        abstract: "Show or change the modes the headphones' mode button cycles through.",
+        subcommands: [FavoritesList.self, FavoritesAdd.self, FavoritesRemove.self, FavoritesSet.self],
+        defaultSubcommand: FavoritesList.self
+    )
+}
+
+/// Applies `change` to the favorite mode indices (when given) and prints the
+/// favorites by name.
+func favoritesCommand(_ global: GlobalOptions, _ modes: [String], _ change: ((inout Set<UInt8>, [UInt8]) -> Void)?) throws
+{
+    let (favorites, all) = try withHeadphones(global) { hp, _ -> (Favorites, [ModeConfig]) in
+        let all = try hp.modes()
+        var favorites = try hp.favorites()
+        if let change {
+            let indices = try modes.map { try hp.resolveMode($0, in: all) }
+            change(&favorites.indices, indices)
+            if favorites.indices.isEmpty { throw Failure.usage("at least one mode must stay a favorite") }
+            favorites = try hp.setFavorites(favorites)
+        }
+        return (favorites, all)
+    }
+    let names = favorites.indices.sorted().map { index in
+        all.first { $0.index == index }?.displayName ?? Presets.name(of: index) ?? "mode \(index)"
+    }
+    Output.emit(.object([
+        ("favorites", .array(names.map(JSON.string))),
+        ("indices", .array(favorites.indices.sorted().map { .int(Int($0)) })),
+    ])) { names.joined(separator: "\n") }
+}
+
+struct FavoritesList: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "list", abstract: "List the favorite modes.")
+
+    @OptionGroup var global: GlobalOptions
+
+    func run() throws
+    {
+        global.apply()
+        try favoritesCommand(global, [], nil)
+    }
+}
+
+struct FavoritesAdd: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "add", abstract: "Add modes to the favorites.")
+
+    @OptionGroup var global: GlobalOptions
+
+    @Argument(help: "Modes, by name or index.")
+    var modes: [String]
+
+    func run() throws
+    {
+        global.apply()
+        try favoritesCommand(global, modes) { set, indices in set.formUnion(indices) }
+    }
+}
+
+struct FavoritesRemove: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "rm", abstract: "Remove modes from the favorites.", aliases: ["remove"]
+    )
+
+    @OptionGroup var global: GlobalOptions
+
+    @Argument(help: "Modes, by name or index.")
+    var modes: [String]
+
+    func run() throws
+    {
+        global.apply()
+        try favoritesCommand(global, modes) { set, indices in set.subtract(indices) }
+    }
+}
+
+struct FavoritesSet: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "set", abstract: "Make exactly these modes the favorites.")
+
+    @OptionGroup var global: GlobalOptions
+
+    @Argument(help: "Modes, by name or index.")
+    var modes: [String]
+
+    func run() throws
+    {
+        global.apply()
+        try favoritesCommand(global, modes) { set, indices in set = Set(indices) }
+    }
+}

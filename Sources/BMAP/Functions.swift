@@ -4,8 +4,11 @@
 public enum Function {
     // Block 0: product info
     public static let bmapVersion = Address(0, 1)
+    /// [product id hi, lo, variant (colour)]
+    public static let productID = Address(0, 3)
     public static let firmwareVersion = Address(0, 5)
     public static let serialNumber = Address(0, 7)
+    public static let modelName = Address(0, 15)
 
     // Block 1: settings
     public static let productName = Address(1, 2)
@@ -22,14 +25,27 @@ public enum Function {
     // Block 2: status
     public static let battery = Address(2, 2)
 
-    // Block 4: device management
+    // Block 4: device management (the hosts the headphones remember)
+    public static let connectHost = Address(4, 1)
+    public static let disconnectHost = Address(4, 2)
+    public static let hosts = Address(4, 4)
+    public static let hostInfo = Address(4, 5)
     public static let pairingMode = Address(4, 8)
+    /// The address of the host asking.
+    public static let ownAddress = Address(4, 9)
 
     // Block 5: audio management
     public static let source = Address(5, 1)
+    public static let media = Address(5, 3)
+    public static let codec = Address(5, 4)
+    public static let volume = Address(5, 5)
 
-    // Block 7: power
+    // Block 7: control
     public static let power = Address(7, 4)
+
+    // Block 18: authentication (its GETs are open)
+    public static let codename = Address(18, 12)
+    public static let platform = Address(18, 13)
 
     // Block 31: audio modes
     public static let allModes = Address(31, 1)

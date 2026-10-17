@@ -58,7 +58,18 @@ public final class Headphones {
 
     public func firmwareVersion() throws -> String
     {
-        String(decoding: try get(Function.firmwareVersion), as: UTF8.self)
+        try string(Function.firmwareVersion)
+    }
+
+    /// An ASCII or UTF-8 reply as a string.
+    public func string(_ address: Address) throws -> String
+    {
+        fixedString(try get(address)[...])
+    }
+
+    public func productID() throws -> ProductID
+    {
+        try ProductID.parse(get(Function.productID))
     }
 
     /// The Bluetooth name. The reply starts with one flags byte.
@@ -256,6 +267,19 @@ public final class Headphones {
         try AudioSettings.parse(get(Function.audioSettings))
     }
 
+    public func favorites() throws -> Favorites
+    {
+        try Favorites.parse(get(Function.favorites))
+    }
+
+    @discardableResult
+    public func setFavorites(_ favorites: Favorites) throws -> Favorites
+    {
+        let echo = try Favorites.parse(setGet(Function.favorites, favorites.build()))
+        try confirm(echo.indices == favorites.indices, Function.favorites)
+        return echo
+    }
+
     // MARK: Custom modes
 
     /// Creates the custom mode `name` in the first empty slot, or updates it
@@ -322,11 +346,96 @@ public final class Headphones {
         }
     }
 
-    // MARK: Connections
+    // MARK: Audio
+
+    public func volume() throws -> Volume
+    {
+        try Volume.parse(get(Function.volume))
+    }
+
+    @discardableResult
+    public func setVolume(_ level: Int) throws -> Volume
+    {
+        let current = try volume()
+        guard (0 ... current.max).contains(level) else {
+            throw UsageError("the volume must be 0 to \(current.max)")
+        }
+        let echo = try Volume.parse(setGet(Function.volume, [UInt8(level)]))
+        try confirm(echo.level == level, Function.volume)
+        return echo
+    }
+
+    /// Asks the playing host to play, pause, skip and so on.
+    public func media(_ action: MediaAction) throws
+    {
+        try start(Function.media, [action.rawValue])
+    }
 
     public func source() throws -> AudioSource
     {
         try AudioSource.parse(get(Function.source))
+    }
+
+    // MARK: Hosts
+
+    /// The addresses of the hosts the headphones remember.
+    public func hostAddresses() throws -> [String]
+    {
+        try parseHostList(get(Function.hosts))
+    }
+
+    public func hostInfo(_ address: String) throws -> HostInfo
+    {
+        guard let bytes = parseAddress(address) else { throw UsageError("'\(address)' is not a Bluetooth address") }
+        return try HostInfo.parse(get(Function.hostInfo, bytes))
+    }
+
+    /// The address of the host asking (this Mac).
+    public func ownAddress() throws -> String
+    {
+        let p = try get(Function.ownAddress)
+        try require(p, 6, Function.ownAddress)
+        return formatAddress(p.prefix(6))
+    }
+
+    /// Every remembered host, linked or not.
+    public func hosts() throws -> [RememberedHost]
+    {
+        let me = try? ownAddress()
+        let playing = Set((try? source())?.addresses ?? [])
+        return try hostAddresses().map { address in
+            let info = try? hostInfo(address)
+            return RememberedHost(
+                address: address, name: info?.name ?? "", connected: info?.connected ?? false,
+                playing: playing.contains(address), isSelf: address == me
+            )
+        }
+    }
+
+    /// The hosts the headphones are playing from (usually one).
+    public func playingFrom() throws -> [RememberedHost]
+    {
+        let me = try? ownAddress()
+        return try source().addresses.map { address in
+            let info = try? hostInfo(address)
+            return RememberedHost(address: address, name: info?.name ?? "", connected: true, playing: true, isSelf: address == me)
+        }
+    }
+
+    /// Asks the headphones to page a remembered host. They acknowledge at
+    /// once and connect in the background, which can take 15 s for a host
+    /// that is asleep, and never report the outcome.
+    public func connectHost(_ address: String) throws
+    {
+        guard let bytes = parseAddress(address) else { throw UsageError("'\(address)' is not a Bluetooth address") }
+        try start(Function.connectHost, [0x00] + bytes, collect: .acknowledged)
+    }
+
+    /// Drops the link to one host. The host stays paired.
+    public func disconnectHost(_ address: String) throws
+    {
+        guard let bytes = parseAddress(address) else { throw UsageError("'\(address)' is not a Bluetooth address") }
+        try start(Function.disconnectHost, bytes, collect: .acknowledged)
     }
 
     // MARK: Pairing and power

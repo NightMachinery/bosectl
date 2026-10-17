@@ -77,7 +77,11 @@ private func decode(_ packet: Packet) -> (String, JSON)?
     case Function.eq:
         return ("eq", .array(EQBand.parseAll(p).map(\.json)))
     case Function.source:
-        return (try? AudioSource.parse(p)).map { ("source", .object([("source", .string($0.kindName)), ("address", .optional($0.address))])) }
+        return (try? AudioSource.parse(p)).map { ("source", .object([("source", .string($0.kindName)), ("addresses", .array($0.addresses.map(JSON.string)))])) }
+    case Function.volume:
+        return (try? Volume.parse(p)).map { ("volume", $0.json) }
+    case Function.favorites:
+        return (try? Favorites.parse(p)).map { ("favorites", .array($0.indices.sorted().map { .int(Int($0)) })) }
     case Function.multipoint:
         return p.first.map { ("multipoint", .bool($0 & 0x01 != 0)) }
     case Function.autoPause:
@@ -105,14 +109,17 @@ struct Dump: ParsableCommand {
     var block: UInt8?
 
     static let known: [(String, Address)] = [
-        ("bmap version", Function.bmapVersion), ("firmware", Function.firmwareVersion),
-        ("serial", Function.serialNumber), ("name", Function.productName),
+        ("bmap version", Function.bmapVersion), ("product id", Function.productID),
+        ("firmware", Function.firmwareVersion), ("serial", Function.serialNumber),
+        ("model name", Function.modelName), ("name", Function.productName),
         ("voice prompts", Function.voicePrompts), ("cnc", Function.cnc), ("eq", Function.eq),
         ("buttons", Function.buttons), ("multipoint", Function.multipoint),
         ("sidetone", Function.sidetone), ("auto pause", Function.autoPause),
         ("auto answer", Function.autoAnswer), ("battery", Function.battery),
-        ("source", Function.source), ("current mode", Function.currentMode),
-        ("favorites", Function.favorites),
+        ("hosts", Function.hosts), ("own address", Function.ownAddress),
+        ("source", Function.source), ("media", Function.media), ("codec", Function.codec),
+        ("volume", Function.volume), ("codename", Function.codename), ("platform", Function.platform),
+        ("current mode", Function.currentMode), ("favorites", Function.favorites),
         ("audio settings", Function.audioSettings),
     ]
 

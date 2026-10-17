@@ -227,39 +227,6 @@ public struct ButtonMapping: Equatable, Sendable {
     public func build() -> [UInt8] { [button, event, action] }
 }
 
-// MARK: Audio source (5.1)
-
-public struct AudioSource: Equatable, Sendable {
-    public enum Kind: UInt8, Sendable {
-        case none = 0, bluetooth = 1, auxiliary = 2
-    }
-
-    public var kind: UInt8
-    /// The source host, for Bluetooth sources.
-    public var address: String?
-
-    public var kindName: String
-    {
-        guard let known = Kind(rawValue: kind) else { return "source \(kind)" }
-        switch known {
-        case .none: return "none"
-        case .bluetooth: return "bluetooth"
-        case .auxiliary: return "aux"
-        }
-    }
-
-    /// GET reply: [supported (2 bytes), active kind, address (6 bytes)].
-    public static func parse(_ payload: [UInt8]) throws -> AudioSource
-    {
-        try require(payload, 3, Function.source)
-        var address: String?
-        if payload[2] == Kind.bluetooth.rawValue, payload.count >= 9 {
-            address = formatAddress(payload[3 ..< 9])
-        }
-        return AudioSource(kind: payload[2], address: address)
-    }
-}
-
 /// Six address bytes as "aa:bb:cc:dd:ee:ff".
 public func formatAddress<C: Collection>(_ bytes: C) -> String where C.Element == UInt8
 {

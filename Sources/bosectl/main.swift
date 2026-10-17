@@ -20,14 +20,15 @@ struct Bosectl: ParsableCommand {
         version: version,
         subcommands: [
             Status.self, BatteryCommand.self, Info.self,
-            Mode.self, Modes.self, Profile.self,
+            Mode.self, Modes.self, Profile.self, FavoritesCommand.self,
             PresetShortcut<QuietPreset>.self, PresetShortcut<AwarePreset>.self,
             PresetShortcut<ImmersionPreset>.self, PresetShortcut<CinemaPreset>.self,
             CNC.self, ANC.self, Wind.self, SpatialCommand.self,
             EQ.self, Name.self, SidetoneCommand.self, Multipoint.self,
             FlagCommand<AutoPauseSetting>.self, FlagCommand<AutoAnswerSetting>.self,
             Prompts.self, Buttons.self,
-            Source.self, Pair.self, PowerOff.self,
+            VolumeCommand.self, Media.self,
+            Source.self, Hosts.self, Pair.self, PowerOff.self,
             Devices.self, LinkCommand.self, Connect.self, Disconnect.self,
             Watch.self, Dump.self, Raw.self,
         ]

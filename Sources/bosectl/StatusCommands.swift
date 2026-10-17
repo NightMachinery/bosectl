@@ -28,6 +28,8 @@ struct Status: ParsableCommand {
             let modeIndex = (try? modeRead.get()) ?? nil
             let modeName = (try? modeRead.get()).map { hp.modeName(index: $0) }
             let audio = try? hp.audioSettings()
+            let volume = try? hp.volume()
+            let playing = try? hp.playingFrom()
             let eq = try? hp.eq()
             let multipoint = try? hp.multipoint()
             let sidetone = try? hp.sidetone()
@@ -44,6 +46,8 @@ struct Status: ParsableCommand {
                 ("mode", .optional(modeName)),
                 ("mode_index", .optional(modeIndex.map(Int.init))),
                 ("noise", audio?.json ?? .null),
+                ("volume", volume?.json ?? .null),
+                ("playing_from", playing.map { .array($0.map(\.json)) } ?? .null),
                 ("eq", eq.map { .array($0.map(\.json)) } ?? .null),
                 ("multipoint", .optional(multipoint)),
                 ("sidetone", .optional(sidetone?.name)),
@@ -59,6 +63,8 @@ struct Status: ParsableCommand {
                 rows.append(("battery", battery?.text ?? "NA"))
                 if let modeName { rows.append(("mode", modeName == "none" ? "none (noise cancellation off)" : modeName)) }
                 if let audio { rows.append(("noise", audio.text)) }
+                if let volume { rows.append(("volume", volume.text)) }
+                if let playing { rows.append(("playing from", playing.isEmpty ? "nothing" : playing.map(\.label).joined(separator: ", "))) }
                 if let eq { rows.append(("eq", eq.map { "\($0.name) \(signed($0.value))" }.joined(separator: ", "))) }
                 if let multipoint { rows.append(("multipoint", onOff(multipoint))) }
                 if let sidetone { rows.append(("sidetone", sidetone.name)) }
@@ -89,7 +95,7 @@ struct BatteryCommand: ParsableCommand {
 
 struct Info: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Model, name, address and firmware."
+        abstract: "Model, colour, name, address, firmware and serial number."
     )
 
     @OptionGroup var global: GlobalOptions
@@ -97,25 +103,46 @@ struct Info: ParsableCommand {
     func run() throws
     {
         global.apply()
-        let (target, name, firmware) = try withHeadphones(global) { hp, target in
-            (target, try? hp.name(), try hp.firmwareVersion())
+        let info = try withHeadphones(global) { hp, target in
+            (
+                target: target,
+                product: try? hp.productID(),
+                modelName: try? hp.string(Function.modelName),
+                codename: try? hp.string(Function.codename),
+                platform: try? hp.string(Function.platform),
+                name: try? hp.name(),
+                firmware: try hp.firmwareVersion(),
+                serial: try? hp.string(Function.serialNumber),
+                bmap: try? hp.string(Function.bmapVersion)
+            )
         }
-        let model = target.device.productID.flatMap(Catalog.lookup)
+        let productID = info.product?.id ?? info.target.device.productID
+        let model = productID.flatMap(Catalog.lookup)
+        let color = info.product.flatMap { p in model?.color(p.variant) }
+        let hexID = productID.map { String(format: "0x%04x", $0) }
         Output.emit(.object([
-            ("model", .optional(model?.name)),
-            ("codename", .optional(model?.codename)),
-            ("product_id", target.device.productID.map { .string(String(format: "0x%04x", $0)) } ?? .null),
-            ("name", .optional(name)),
-            ("address", .string(target.device.address)),
-            ("firmware", .string(firmware)),
+            ("model", .optional(model?.name ?? info.modelName)),
+            ("model_name", .optional(info.modelName)),
+            ("codename", .optional(info.codename ?? model?.codename)),
+            ("platform", .optional(info.platform)),
+            ("product_id", .optional(hexID)),
+            ("variant", .optional(info.product.map { Int($0.variant) })),
+            ("color", .optional(color)),
+            ("name", .optional(info.name)),
+            ("address", .string(info.target.device.address)),
+            ("firmware", .string(info.firmware)),
+            ("serial", .optional(info.serial)),
+            ("bmap_version", .optional(info.bmap)),
         ])) {
-            keyValueLines([
-                ("model", model?.name ?? "unknown"),
-                ("product id", target.device.productID.map { String(format: "0x%04x", $0) } ?? "unknown"),
-                ("name", name ?? "unknown"),
-                ("address", target.device.address),
-                ("firmware", firmware),
-            ])
+            var rows: [(String, String)] = [("model", model?.name ?? info.modelName ?? "unknown")]
+            if let color { rows.append(("color", color)) }
+            rows.append(("product id", [hexID, info.codename ?? model?.codename, info.platform].compactMap { $0 }.joined(separator: ", ")))
+            rows.append(("name", info.name ?? "unknown"))
+            rows.append(("address", info.target.device.address))
+            rows.append(("firmware", info.firmware))
+            if let serial = info.serial { rows.append(("serial", serial)) }
+            if let bmap = info.bmap { rows.append(("bmap", bmap)) }
+            return keyValueLines(rows)
         }
     }
 }

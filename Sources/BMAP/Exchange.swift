@@ -6,6 +6,10 @@ import Foundation
 public enum Collect: Sendable {
     /// The first STATUS or RESULT for the request's address.
     case one
+    /// The first PROCESSING, STATUS or RESULT for the request's address. For
+    /// actions the device carries out after acknowledging them, without
+    /// reporting when they finish.
+    case acknowledged
     /// Every accepted packet until a RESULT for the request's address, or
     /// until nothing has arrived for `quiet` seconds. For requests the device
     /// answers with a series of packets, such as listing all modes.
@@ -72,6 +76,10 @@ public struct AnswerCollector {
         if packet.address == request.address {
             switch packet.op {
             case .processing:
+                if case .acknowledged = collect {
+                    answers.append(packet)
+                    done = true
+                }
                 return .progress
             case .error:
                 throw DeviceError(request: request, response: packet)
@@ -89,8 +97,11 @@ public struct AnswerCollector {
         // Our own request echoed back would be a transport bug; ignore it.
         guard packet.op == .status || packet.op == .result else { return .unrelated }
         answers.append(packet)
-        if case .one = collect, packet.address == request.address {
-            done = true
+        switch collect {
+        case .one, .acknowledged:
+            if packet.address == request.address { done = true }
+        case .all:
+            break
         }
         return .progress
     }

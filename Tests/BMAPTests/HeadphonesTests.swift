@@ -157,9 +157,10 @@ final class HeadphonesTests: XCTestCase {
         XCTAssertEqual(try Sidetone.parse([1, 2]), .medium)
         XCTAssertEqual(try Sidetone.parse([1, 3, 0x0f]), .low)
         XCTAssertEqual(Sidetone.low.build(), [1, 3])
-        let source = try! AudioSource.parse([0, 3, 1, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff])
-        XCTAssertEqual(source.address, "aa:bb:cc:dd:ee:ff")
+        let source = try! AudioSource.parse([0, 0x0f, 1, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff])
+        XCTAssertEqual(source.addresses, ["aa:bb:cc:dd:ee:ff"])
         XCTAssertEqual(source.kindName, "bluetooth")
+        XCTAssertEqual(try AudioSource.parse([0, 0x0f, 0]).kindName, "none")
         // The shortcut button of a QC Ultra 2, set to the voice assistant.
         let buttons = try! ButtonMapping.parse(Hex.decode("8009010009400200000000")!)
         XCTAssertEqual(buttons.action, 1)
@@ -175,5 +176,38 @@ final class HeadphonesTests: XCTestCase {
         var prompts = try! hp.voicePrompts()
         prompts.announceConnections = true
         XCTAssertThrowsError(try hp.setVoicePrompts(prompts)) { XCTAssertTrue($0 is NotApplied) }
+    }
+
+    func testFavoritesMaskIsByteReversed()
+    {
+        let three = try! Favorites.parse([0x0b, 0x00, 0x07])
+        XCTAssertEqual(three.indices, [0, 1, 2])
+        XCTAssertEqual(three.build(), [0x0b, 0x00, 0x07])
+        let wide = try! Favorites.parse([0x0b, 0x04, 0x01])
+        XCTAssertEqual(wide.indices, [0, 10])
+        XCTAssertEqual(wide.build(), [0x0b, 0x04, 0x01])
+    }
+
+    func testHostPayloads()
+    {
+        let info = try! HostInfo.parse([0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x03, 0x01, 0x03] + Array("Laptop".utf8))
+        XCTAssertEqual(info.address, "aa:bb:cc:dd:ee:ff")
+        XCTAssertTrue(info.connected)
+        XCTAssertEqual(info.name, "Laptop")
+        XCTAssertFalse(try HostInfo.parse([1, 2, 3, 4, 5, 6, 0x00, 0x02, 0x03]).connected)
+        XCTAssertEqual(
+            try parseHostList([0x03, 1, 2, 3, 4, 5, 6, 0xa, 0xb, 0xc, 0xd, 0xe, 0xf]),
+            ["01:02:03:04:05:06", "0a:0b:0c:0d:0e:0f"]
+        )
+        XCTAssertEqual(try Volume.parse([0x1f, 0x0b]), Volume(level: 11, max: 31))
+        XCTAssertEqual(try ProductID.parse([0x40, 0x82, 0x04]), ProductID(id: 0x4082, variant: 4))
+    }
+
+    func testAcknowledgedRequestsEndOnProcessing()
+    {
+        let fake = FakeDevice()
+        fake.reply(Function.connectHost, .processing, [])
+        try! Headphones(fake).connectHost("aa:bb:cc:dd:ee:ff")
+        XCTAssertEqual(fake.sent, [Packet(Function.connectHost, .start, [0, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff])])
     }
 }
