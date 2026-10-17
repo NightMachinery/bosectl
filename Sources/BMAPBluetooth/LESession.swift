@@ -13,8 +13,6 @@ public final class LESession: NSObject, Requester, CBCentralManagerDelegate, CBP
 
     /// Every packet sent and received, as Session reports them.
     public var onTraffic: ((_ outgoing: Bool, _ packet: Packet) -> Void)?
-    /// What was found along the way, for --trace.
-    public private(set) var notes: [String] = []
     /// Every notification as raw bytes, before framing, for --trace.
     public var onRaw: ((String) -> Void)?
 
@@ -38,11 +36,15 @@ public final class LESession: NSObject, Requester, CBCentralManagerDelegate, CBP
     private var received: [Packet] = []
     private var raw: [String] = []
     private var subscribed: [CBCharacteristic] = []
+    /// What was found along the way, for --trace.
+    private let onNote: ((String) -> Void)?
 
     /// Connects over LE to the Bose headphones advertising `name`, or to the
-    /// first Bose headphones heard when it is nil.
-    public init(name: String?, timeout: TimeInterval = 10) throws
+    /// first Bose headphones heard when it is nil. `onNote` hears what is
+    /// found along the way, even when connecting fails.
+    public init(name: String?, timeout: TimeInterval = 10, onNote: ((String) -> Void)? = nil) throws
     {
+        self.onNote = onNote
         super.init()
         self.name = name
         central = CBCentralManager(delegate: self, queue: queue)
@@ -66,7 +68,25 @@ public final class LESession: NSObject, Requester, CBCentralManagerDelegate, CBP
         }
     }
 
+    public var isClosed: Bool { queue.sync { disconnected || peripheral == nil } }
+
     // MARK: Requests
+
+    public func send(_ packet: Packet) throws
+    {
+        try write(packet)
+    }
+
+    public func listen(for duration: TimeInterval) -> [Packet]
+    {
+        let deadline = Date().addingTimeInterval(duration)
+        var out: [Packet] = []
+        while Date() < deadline, !isClosed {
+            out += take()
+            _ = event.wait(timeout: .now() + min(0.05, max(0, deadline.timeIntervalSinceNow)))
+        }
+        return out + take()
+    }
 
     public func request(_ packet: Packet, accept: Set<Address>, collect: Collect, timeout: TimeInterval) throws -> [Packet]
     {
@@ -127,10 +147,11 @@ public final class LESession: NSObject, Requester, CBCentralManagerDelegate, CBP
         let target = queue.sync { () -> CBPeripheral? in
             let linked = central?.retrieveConnectedPeripherals(withServices: [LESession.service]) ?? []
             if let match = linked.first(where: { matches($0.name) }) {
-                notes.append("using the LE link macOS already has")
+                note("using the LE link macOS already has")
                 return match
             }
-            central?.scanForPeripherals(withServices: nil, options: nil)
+            // Duplicates too: the name may only come with a later scan response.
+            central?.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
             return nil
         }
         if target == nil {
@@ -151,6 +172,11 @@ public final class LESession: NSObject, Requester, CBCentralManagerDelegate, CBP
             for c in subscribed { peripheral?.setNotifyValue(true, for: c) }
         }
         try wait(until: deadline, "notifications from the BMAP characteristic") { $0.notifying }
+    }
+
+    private func note(_ text: String)
+    {
+        onNote?(text)
     }
 
     private func matches(_ advertised: String?) -> Bool
@@ -190,7 +216,7 @@ public final class LESession: NSObject, Requester, CBCentralManagerDelegate, CBP
               matches(advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? peripheral.name)
         else { return }
         heard = peripheral
-        notes.append("heard the advertisement at \(rssi) dBm")
+        note("heard the advertisement at \(rssi) dBm")
         event.signal()
     }
 
@@ -228,7 +254,7 @@ public final class LESession: NSObject, Requester, CBCentralManagerDelegate, CBP
     {
         let found = service.characteristics ?? []
         for c in found {
-            notes.append("characteristic \(c.uuid.uuidString): properties 0x\(String(c.properties.rawValue, radix: 16))")
+            note("characteristic \(c.uuid.uuidString): properties 0x\(String(c.properties.rawValue, radix: 16))")
         }
         // Replies may come on either; listen to both, write to one.
         subscribed = found.filter { $0.properties.contains(.notify) || $0.properties.contains(.indicate) }
@@ -241,7 +267,7 @@ public final class LESession: NSObject, Requester, CBCentralManagerDelegate, CBP
             event.signal()
             return
         }
-        notes.append("using \(chosen.uuid == LESession.secureCharacteristic ? "the secure" : "the plain") characteristic")
+        note("using \(chosen.uuid == LESession.secureCharacteristic ? "the secure" : "the plain") characteristic")
         characteristic = chosen
         event.signal()
     }
