@@ -264,6 +264,30 @@ Three firmware rules surfaced along the way:
 - Automatic noise level (ActiveSense) is a feature of the aware preset. A
   custom mode with it set is refused.
 
+* Bluetooth LE advertisement
+
+While on, the headphones advertise over Bluetooth LE, whether or not anything
+is linked to them. The manufacturer data, under Bose's company identifier
+=0x009E= (little-endian), reads
+
+#+begin_example
+[0x9e, 0x00, format, product, flags, six more bytes]
+#+end_example
+
+- =format= is 0, the only one understood.
+- =product= holds a product value in its low 5 bits, offset by 100: the QC
+  Ultra 2 sends =0x8c=, so 12 + 100 = 112, the value Bose's own product table
+  gives this model. The high 3 bits are the colour, numbered as in 0.3.
+- =flags= read =0x07= on the cable and =0x0f= in pairing mode: bit 0 is
+  charging and bit 3 pairing mode. Bit 1 is described elsewhere as "a
+  connection slot is free", but it stayed set with two hosts linked. Bit 2 is
+  set and not understood.
+- The last six bytes did not change across these states and are not decoded.
+
+macOS hides LE addresses from applications, so a heard device cannot be
+matched to the paired one by address; CoreBluetooth gives a per-Mac
+identifier instead. The advertisement carries the headphones' name.
+
 * What is not known yet
 
 - The unknown bytes in the mode record, 5.1 and 4.5.

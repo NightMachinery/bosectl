@@ -16,10 +16,11 @@ let package = Package(
         // Pure Swift with no I/O, so it is fully testable offline.
         .target(name: "BMAP"),
         // IOBluetooth: paired-device discovery, link state, RFCOMM sessions.
+        // CoreBluetooth: listening for advertisements.
         .target(
             name: "BMAPBluetooth",
             dependencies: ["BMAP"],
-            linkerSettings: [.linkedFramework("IOBluetooth")]
+            linkerSettings: [.linkedFramework("IOBluetooth"), .linkedFramework("CoreBluetooth")]
         ),
         .executableTarget(
             name: "bosectl",

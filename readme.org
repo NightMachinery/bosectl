@@ -98,6 +98,9 @@ bosectl pair                           # discoverable; drops the second host
 bosectl pair off
 bosectl power-off                      # turning them on again is up to you
 
+# without connecting
+bosectl nearby                         # on and in range? exit 0 if so, 3 if not
+
 # this Mac's own link
 bosectl link                           # exit 0 if linked, 3 if not
 bosectl connect
@@ -207,6 +210,15 @@ Two different layers:
 The headphones stay linked to at most two hosts at once. There is no command
 to move audio between two linked hosts: this model does not support it. Drop
 the one playing and the other takes over.
+
+** Nearby, without connecting
+
+=bosectl nearby= listens for a few seconds for the Bluetooth LE advertisements
+the headphones send while they are on, linked or not, and reports the model,
+colour, signal strength, and whether they are charging or in pairing mode. It
+never connects and never touches this Mac's audio. A silence is not proof that
+they are off: right after leaving pairing mode they went unheard for a few
+seconds, so pass a longer =--duration= when it matters.
 
 ** Device selection
 

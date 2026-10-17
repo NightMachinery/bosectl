@@ -8,6 +8,8 @@ public struct Model: Sendable {
     public var verified: Bool
     /// Colour names by the variant byte of 0.3, where known.
     public var colors: [UInt8: String] = [:]
+    /// The product value in its Bluetooth LE advertisement, where known.
+    public var bleValue: Int? = nil
 
     public func color(_ variant: UInt8) -> String?
     {
@@ -29,7 +31,8 @@ public enum Catalog {
         Model(productID: 0x4075, name: "QuietComfort Headphones", codename: "prince", verified: false),
         Model(
             productID: 0x4082, name: "QuietComfort Ultra Headphones (2nd Gen)", codename: "wolverine", verified: true,
-            colors: [1: "Black", 2: "White Smoke", 3: "Driftwood Sand", 4: "Midnight Violet", 5: "Desert Gold"]
+            colors: [1: "Black", 2: "White Smoke", 3: "Driftwood Sand", 4: "Midnight Violet", 5: "Desert Gold"],
+            bleValue: 112
         ),
         Model(productID: 0x4083, name: "QuietComfort Headphones (2nd Gen)", codename: "", verified: false),
         // Earbuds
@@ -44,7 +47,7 @@ public enum Catalog {
         Model(productID: 0x404C, name: "Frames (2nd Gen)", codename: "celine_ii", verified: false),
         Model(productID: 0x4060, name: "Frames Tempo", codename: "olivia", verified: false),
         Model(productID: 0x4061, name: "Frames", codename: "vedder", verified: false),
-        Model(productID: 0x4062, name: "QuietComfort Ultra Earbuds (2nd Gen)", codename: "edith", verified: false),
+        Model(productID: 0x4062, name: "QuietComfort Ultra Earbuds (2nd Gen)", codename: "edith", verified: false, bleValue: 108),
         Model(productID: 0x4064, name: "QuietComfort Earbuds II", codename: "smalls", verified: false),
         Model(productID: 0x4068, name: "Ultra Open Earbuds", codename: "serena", verified: false),
         Model(productID: 0x4072, name: "QuietComfort Ultra Earbuds", codename: "scotty", verified: false),
@@ -67,5 +70,10 @@ public enum Catalog {
     public static func lookup(_ productID: UInt16) -> Model?
     {
         models.first { $0.productID == productID }
+    }
+
+    public static func lookup(bleValue: Int) -> Model?
+    {
+        models.first { $0.bleValue == bleValue }
     }
 }
