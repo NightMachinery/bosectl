@@ -42,7 +42,7 @@ struct Status: ParsableCommand {
                 ("name", .optional(name)),
                 ("address", .string(target.device.address)),
                 ("firmware", .optional(firmware)),
-                ("battery", battery?.json ?? .null),
+                ("batteries", .array(battery.map { [$0.partJSON] } ?? [])),
                 ("mode", .optional(modeName)),
                 ("mode_index", .optional(modeIndex.map(Int.init))),
                 ("noise", audio?.json ?? .null),
@@ -89,7 +89,7 @@ struct BatteryCommand: ParsableCommand {
     {
         global.apply()
         let battery = try withHeadphones(global) { hp, _ in try hp.battery() }
-        Output.emit(battery.json) { battery.text }
+        Output.emit(battery.json) { "battery: \(battery.text)" }
     }
 }
 

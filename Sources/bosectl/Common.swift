@@ -47,7 +47,17 @@ func keyValueLines(_ rows: [(String, String)]) -> String
 func signed(_ value: Int) -> String { value > 0 ? "+\(value)" : "\(value)" }
 
 extension Battery {
-    var json: JSON { .object([("level_percent", .optional(percent))]) }
+    /// sonyctl's shape, so one consumer reads both tools: a list of parts,
+    /// each with a level (null when there is no reading) and a charging
+    /// state. The headphones are a single part, and which byte says they
+    /// are charging is not known yet.
+    var json: JSON { .object([("batteries", .array([partJSON]))]) }
+
+    var partJSON: JSON
+    {
+        .object([("part", .string("battery")), ("level_percent", .optional(percent)), ("charging", .string("unknown"))])
+    }
+
     var text: String { percent.map { "\($0)%" } ?? "NA" }
 }
 
