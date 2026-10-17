@@ -10,6 +10,7 @@ public enum Function {
     // Block 1: settings
     public static let productName = Address(1, 2)
     public static let voicePrompts = Address(1, 3)
+    /// Read-only on this model; noise control lives in block 31.
     public static let cnc = Address(1, 5)
     public static let eq = Address(1, 7)
     public static let buttons = Address(1, 9)
@@ -23,7 +24,6 @@ public enum Function {
 
     // Block 4: device management
     public static let pairingMode = Address(4, 8)
-    public static let routing = Address(4, 12)
 
     // Block 5: audio management
     public static let source = Address(5, 1)

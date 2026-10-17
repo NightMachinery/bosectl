@@ -28,7 +28,6 @@ struct ProfileSet: ParsableCommand {
     @Option(help: "Noise level, 0 (most cancellation) to 10.") var cnc: UInt8?
     @Option(help: "Noise cancellation: on or off.") var anc: String?
     @Option(help: "Wind block: on or off.") var wind: String?
-    @Option(name: .customLong("auto-cnc"), help: "Automatic noise level: on or off.") var autoCNC: String?
     @Option(help: "Spatial audio: off, room or head.") var spatial: String?
     @Option(help: "Rename the mode.") var rename: String?
     @Flag(help: "Switch to the mode afterwards.") var activate = false
@@ -38,17 +37,15 @@ struct ProfileSet: ParsableCommand {
         global.apply()
         let anc = try self.anc.map { try parseSwitch($0, "--anc") }
         let wind = try self.wind.map { try parseSwitch($0, "--wind") }
-        let autoCNC = try self.autoCNC.map { try parseSwitch($0, "--auto-cnc") }
         let spatial = try self.spatial.map { text -> Spatial in
             guard let s = Spatial.named(text) else { throw Failure.usage("--spatial takes off, room or head") }
             return s
         }
         let saved = try withHeadphones(global) { hp, _ -> ModeConfig in
             let mode = try hp.saveCustomMode(name) { mode in
-                if let cnc { mode.cncLevel = cnc }
+                if let cnc { mode.setNoiseLevel(cnc, anc: anc) }
                 if let anc { mode.ancEnabled = anc }
                 if let wind { mode.windBlock = wind }
-                if let autoCNC { mode.autoCNC = autoCNC }
                 if let spatial { mode.spatial = spatial.rawValue }
                 if let rename { mode.name = rename }
             }

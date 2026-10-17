@@ -15,15 +15,18 @@ struct Status: ParsableCommand {
     func run() throws
     {
         global.apply()
-        try withHeadphones(global) { hp, target in
+        try withHeadphones(global) { hp, target -> Void in
             // Each read stands alone: one the firmware rejects leaves its
             // field null instead of failing the whole report.
             let model = target.device.productID.flatMap(Catalog.lookup)?.name
             let name = try? hp.name()
             let firmware = try? hp.firmwareVersion()
             let battery = try? hp.battery()
-            let modeIndex = try? hp.currentModeIndex()
-            let modeName = modeIndex.map { hp.currentModeName(index: $0) }
+            // A failed read and "no mode active" both leave the index nil;
+            // only the second has a name.
+            let modeRead = Result { try hp.currentModeIndex() }
+            let modeIndex = (try? modeRead.get()) ?? nil
+            let modeName = (try? modeRead.get()).map { hp.modeName(index: $0) }
             let audio = try? hp.audioSettings()
             let eq = try? hp.eq()
             let multipoint = try? hp.multipoint()
@@ -32,7 +35,7 @@ struct Status: ParsableCommand {
             let autoAnswer = try? hp.flag(Function.autoAnswer)
             let prompts = try? hp.voicePrompts()
 
-            Output.emit(.object([
+            let fields: [(String, JSON)] = [
                 ("model", .optional(model)),
                 ("name", .optional(name)),
                 ("address", .string(target.device.address)),
@@ -46,21 +49,22 @@ struct Status: ParsableCommand {
                 ("sidetone", .optional(sidetone?.name)),
                 ("auto_pause", .optional(autoPause)),
                 ("auto_answer", .optional(autoAnswer)),
-                ("voice_prompts", prompts.map { .object([("enabled", .bool($0.enabled)), ("language", .string($0.languageName))]) } ?? .null),
-            ])) {
+                ("voice_prompts", prompts?.json ?? .null),
+            ]
+            Output.emit(.object(fields)) {
                 var rows: [(String, String)] = []
                 rows.append(("model", model ?? "unknown"))
                 if let name { rows.append(("name", name)) }
                 if let firmware { rows.append(("firmware", firmware)) }
                 rows.append(("battery", battery?.text ?? "NA"))
-                if let modeName { rows.append(("mode", modeName)) }
+                if let modeName { rows.append(("mode", modeName == "none" ? "none (noise cancellation off)" : modeName)) }
                 if let audio { rows.append(("noise", audio.text)) }
                 if let eq { rows.append(("eq", eq.map { "\($0.name) \(signed($0.value))" }.joined(separator: ", "))) }
                 if let multipoint { rows.append(("multipoint", onOff(multipoint))) }
                 if let sidetone { rows.append(("sidetone", sidetone.name)) }
                 if let autoPause { rows.append(("auto pause", onOff(autoPause))) }
                 if let autoAnswer { rows.append(("auto answer", onOff(autoAnswer))) }
-                if let prompts { rows.append(("voice prompts", "\(onOff(prompts.enabled)) (\(prompts.languageName))")) }
+                if let prompts { rows.append(("voice prompts", prompts.text)) }
                 return keyValueLines(rows)
             }
         }

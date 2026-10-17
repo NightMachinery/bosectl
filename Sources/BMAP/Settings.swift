@@ -96,8 +96,13 @@ public struct EQBand: Equatable, Sendable {
 // MARK: Voice prompts (1.3)
 
 public struct VoicePrompts: Equatable, Sendable {
-    public var enabled: Bool
     public var language: UInt8
+    /// Name a host when it connects (byte 0, bit 5).
+    public var announceConnections: Bool
+    /// Say the battery level at power-on (byte 6), when the reply has it.
+    public var announceBattery: Bool?
+    /// The language is the factory default (byte 0, bit 6); read only.
+    public var defaultLanguage: Bool
 
     public static let languages: [UInt8: String] = [
         0: "UK English", 1: "US English", 2: "French", 3: "Italian", 4: "German",
@@ -109,17 +114,29 @@ public struct VoicePrompts: Equatable, Sendable {
 
     public var languageName: String { VoicePrompts.languages[language] ?? "language \(language)" }
 
-    /// Byte 0: bit 5 enabled, bits 0-4 language.
+    /// GET reply, 7 bytes on the QC Ultra 2: [flags and language, ?, ?, ?,
+    /// ?, ?, battery announcement]. Byte 0: bits 0-4 language, bit 5
+    /// connection announcements, bit 6 default language.
     public static func parse(_ payload: [UInt8]) throws -> VoicePrompts
     {
         try require(payload, 1, Function.voicePrompts)
-        return VoicePrompts(enabled: payload[0] & 0x20 != 0, language: payload[0] & 0x1F)
+        return VoicePrompts(
+            language: payload[0] & 0x1F,
+            announceConnections: payload[0] & 0x20 != 0,
+            announceBattery: payload.count >= 7 ? payload[6] != 0 : nil,
+            defaultLanguage: payload[0] & 0x40 != 0
+        )
     }
 
+    /// SETGET payload: [connection announcements (bit 5) | language, battery
+    /// announcement].
     public func build() -> [UInt8]
     {
-        [(enabled ? 0x20 : 0) | (language & 0x1F)]
+        [(announceConnections ? 0x20 : 0) | (language & 0x1F), announceBattery == true ? 1 : 0]
     }
+
+    /// The fields a write sets.
+    var writable: [UInt8] { build() }
 }
 
 // MARK: Sidetone (1.11)
@@ -193,18 +210,16 @@ public struct ButtonMapping: Equatable, Sendable {
         return actionNames.first { $0.value == key }?.key
     }
 
-    /// GET reply: [button, event, action, capability bitmap...]; bit n of the
-    /// bitmap (little-endian across bytes) means action n is supported.
+    /// GET reply: [button, event, action, supported (big-endian u32), ...];
+    /// bit n of `supported` means action n is accepted. (Reading the four
+    /// bytes as one little-endian bitmap gives actions the Bose app never
+    /// offers, and leaves out the one configured.)
     public static func parse(_ payload: [UInt8]) throws -> ButtonMapping
     {
         try require(payload, 3, Function.buttons)
-        var supported: [UInt8] = []
-        for (byteIndex, byte) in payload.dropFirst(3).prefix(4).enumerated() {
-            for bit in 0 ..< 8 where byte & (1 << bit) != 0 {
-                let id = byteIndex * 8 + bit
-                if id > 0 { supported.append(UInt8(id)) }
-            }
-        }
+        let maskBytes = Array(payload.dropFirst(3).prefix(4))
+        let mask = maskBytes.reduce(UInt32(0)) { $0 << 8 | UInt32($1) } << (8 * UInt32(4 - maskBytes.count))
+        let supported = (0 ..< 32).filter { mask & (1 << $0) != 0 }.map(UInt8.init)
         return ButtonMapping(button: payload[0], event: payload[1], action: payload[2], supported: supported)
     }
 

@@ -15,12 +15,14 @@ struct EQ: ParsableCommand {
 
     @OptionGroup var global: GlobalOptions
 
-    @Argument(help: "BASS MID TREBLE, or 'flat'.")
+    // Negative values look like options to ArgumentParser, so these take
+    // whatever follows them.
+    @Argument(parsing: .allUnrecognized, help: "BASS MID TREBLE, or 'flat'.")
     var values: [String] = []
 
-    @Option(help: "Set the bass band only.") var bass: Int?
-    @Option(help: "Set the mid band only.") var mid: Int?
-    @Option(help: "Set the treble band only.") var treble: Int?
+    @Option(parsing: .unconditional, help: "Set the bass band only.") var bass: Int?
+    @Option(parsing: .unconditional, help: "Set the mid band only.") var mid: Int?
+    @Option(parsing: .unconditional, help: "Set the treble band only.") var treble: Int?
 
     func run() throws
     {
@@ -56,7 +58,7 @@ struct EQ: ParsableCommand {
 
 struct Name: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Show or set the headphones' Bluetooth name (at most 31 bytes)."
+        abstract: "Show or set the headphones' Bluetooth name (at most 30 bytes)."
     )
 
     @OptionGroup var global: GlobalOptions
@@ -174,22 +176,27 @@ enum AutoAnswerSetting: FlagSetting {
 
 struct Prompts: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Show or toggle voice prompts, and set their language.",
+        abstract: "Show or change the voice prompts: language, and which announcements play.",
         discussion: "Languages: " + VoicePrompts.languages.sorted { $0.key < $1.key }.map(\.value).joined(separator: ", ") + "."
+            + " Firmware 10.12.12 ignores changes; the command then fails rather than report one."
     )
 
     @OptionGroup var global: GlobalOptions
 
-    @Argument(help: "on or off.")
-    var state: String?
-
     @Option(help: "Prompt language, by name (e.g. 'US English') or number.")
     var language: String?
+
+    @Option(help: "Name each host as it connects: on or off.")
+    var connections: String?
+
+    @Option(help: "Say the battery level at power-on: on or off.")
+    var battery: String?
 
     func run() throws
     {
         global.apply()
-        let wanted = try state.map { try parseSwitch($0, "prompts") }
+        let connections = try self.connections.map { try parseSwitch($0, "--connections") }
+        let battery = try self.battery.map { try parseSwitch($0, "--battery") }
         let languageID = try language.map { text -> UInt8 in
             if let n = UInt8(text), VoicePrompts.languages[n] != nil { return n }
             guard let match = VoicePrompts.languages.first(where: { $0.value.lowercased() == text.lowercased() }) else {
@@ -199,16 +206,18 @@ struct Prompts: ParsableCommand {
         }
         let current = try withHeadphones(global) { hp, _ -> VoicePrompts in
             var prompts = try hp.voicePrompts()
-            if wanted != nil || languageID != nil {
-                if let wanted { prompts.enabled = wanted }
-                if let languageID { prompts.language = languageID }
-                try hp.setVoicePrompts(prompts)
-                prompts = try hp.voicePrompts()
-            }
-            return prompts
+            guard connections != nil || battery != nil || languageID != nil else { return prompts }
+            if let connections { prompts.announceConnections = connections }
+            if let battery { prompts.announceBattery = battery }
+            if let languageID { prompts.language = languageID }
+            return try hp.setVoicePrompts(prompts)
         }
-        Output.emit(.object([("enabled", .bool(current.enabled)), ("language", .string(current.languageName))])) {
-            "\(onOff(current.enabled)) (\(current.languageName))"
+        Output.emit(current.json) {
+            keyValueLines([
+                ("language", current.languageName),
+                ("connections", onOff(current.announceConnections)),
+                ("battery", current.announceBattery.map(onOff) ?? "unknown"),
+            ])
         }
     }
 }

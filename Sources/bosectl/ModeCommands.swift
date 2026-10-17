@@ -29,16 +29,16 @@ struct Mode: ParsableCommand {
 /// Prints the current mode, switching first when `name` is given.
 func switchMode(_ global: GlobalOptions, to name: String?, announce: Bool) throws
 {
-    let (index, modeName) = try withHeadphones(global) { hp, _ -> (UInt8, String) in
+    let (index, modeName) = try withHeadphones(global) { hp, _ -> (UInt8?, String) in
         if let name {
             let index = try hp.resolveMode(name)
             try hp.setMode(index, announce: announce)
-            return (index, hp.currentModeName(index: index))
+            return (index, hp.modeName(index: index))
         }
         let index = try hp.currentModeIndex()
-        return (index, hp.currentModeName(index: index))
+        return (index, hp.modeName(index: index))
     }
-    Output.emit(.object([("mode", .string(modeName)), ("index", .int(Int(index)))])) { modeName }
+    Output.emit(.object([("mode", .string(modeName)), ("index", .optional(index.map(Int.init)))])) { modeName }
 }
 
 /// `bosectl quiet` and friends: shortcuts for `bosectl mode NAME`.
@@ -130,14 +130,16 @@ func listModes(_ global: GlobalOptions, all: Bool) throws
     }
 }
 
-// MARK: Live noise settings (31.10)
+// MARK: Noise settings of the active mode
 
-/// Reads the active mode's settings, applies `change` when given, and prints
-/// the result.
-func audioSettingsCommand(_ global: GlobalOptions, _ change: ((inout AudioSettings) -> Void)?) throws
+/// Prints the active mode's noise settings, changing them first when `change`
+/// is given. Changes rewrite the mode's own record (31.6): writing the live
+/// settings (31.10) instead detaches a preset and turns noise cancellation
+/// off.
+func activeModeCommand(_ global: GlobalOptions, _ change: ((inout ModeConfig) -> Void)?) throws
 {
-    let settings = try withHeadphones(global) { hp, _ in
-        if let change { return try hp.updateAudioSettings(change) }
+    let settings = try withHeadphones(global) { hp, _ -> AudioSettings in
+        if let change { return try hp.updateActiveMode(change).settings }
         return try hp.audioSettings()
     }
     Output.emit(settings.json) { settings.text }
@@ -146,7 +148,8 @@ func audioSettingsCommand(_ global: GlobalOptions, _ change: ((inout AudioSettin
 struct CNC: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "cnc",
-        abstract: "Show or set the noise level of the active mode: 0 cancels most, 10 lets most in."
+        abstract: "Show or set the noise level of the active custom mode: 0 cancels most, 10 lets most in.",
+        discussion: "The presets are fixed; make a custom mode with 'bosectl profile set NAME --cnc LEVEL --activate'."
     )
 
     @OptionGroup var global: GlobalOptions
@@ -162,14 +165,14 @@ struct CNC: ParsableCommand {
     func run() throws
     {
         global.apply()
-        try audioSettingsCommand(global, level.map { level in { $0.cncLevel = level } })
+        try activeModeCommand(global, level.map { level in { $0.setNoiseLevel(level) } })
     }
 }
 
 struct ANC: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "anc",
-        abstract: "Show or toggle noise cancellation in the active mode."
+        abstract: "Show or toggle noise cancellation in the active custom mode."
     )
 
     @OptionGroup var global: GlobalOptions
@@ -181,13 +184,13 @@ struct ANC: ParsableCommand {
     {
         global.apply()
         let on = try state.map { try parseSwitch($0, "anc") }
-        try audioSettingsCommand(global, on.map { on in { $0.ancEnabled = on } })
+        try activeModeCommand(global, on.map { on in { $0.ancEnabled = on } })
     }
 }
 
 struct Wind: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Show or toggle wind block in the active mode."
+        abstract: "Show or toggle wind block in the active custom mode (it bypasses noise cancellation)."
     )
 
     @OptionGroup var global: GlobalOptions
@@ -199,33 +202,14 @@ struct Wind: ParsableCommand {
     {
         global.apply()
         let on = try state.map { try parseSwitch($0, "wind") }
-        try audioSettingsCommand(global, on.map { on in { $0.windBlock = on } })
-    }
-}
-
-struct AutoCNC: ParsableCommand {
-    static let configuration = CommandConfiguration(
-        commandName: "auto-cnc",
-        abstract: "Show or toggle automatic noise level (ActiveSense) in the active mode."
-    )
-
-    @OptionGroup var global: GlobalOptions
-
-    @Argument(help: "on or off.")
-    var state: String?
-
-    func run() throws
-    {
-        global.apply()
-        let on = try state.map { try parseSwitch($0, "auto-cnc") }
-        try audioSettingsCommand(global, on.map { on in { $0.autoCNC = on } })
+        try activeModeCommand(global, on.map { on in { $0.windBlock = on } })
     }
 }
 
 struct SpatialCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "spatial",
-        abstract: "Show or set spatial audio in the active mode: off, room (fixed stage) or head (follows your head)."
+        abstract: "Show or set spatial audio in the active custom mode: off, room (fixed stage) or head (follows your head)."
     )
 
     @OptionGroup var global: GlobalOptions
@@ -240,6 +224,6 @@ struct SpatialCommand: ParsableCommand {
             guard let s = Spatial.named(text) else { throw Failure.usage("spatial takes off, room or head") }
             return s
         }
-        try audioSettingsCommand(global, spatial.map { s in { $0.spatial = s.rawValue } })
+        try activeModeCommand(global, spatial.map { s in { $0.spatial = s.rawValue } })
     }
 }

@@ -37,7 +37,8 @@ public struct ModeConfig: Equatable, Sendable {
     /// Voice prompt played when switching to the mode (two bytes).
     public var prompt: [UInt8]
     public var editable: Bool
-    public var configured: Bool
+    /// In the rotation of the headphones' mode button (mirrors 31.8).
+    public var favorite: Bool
     public var name: String
     /// 0 = most cancellation, 10 = most ambient.
     public var cncLevel: UInt8
@@ -45,9 +46,15 @@ public struct ModeConfig: Equatable, Sendable {
     public var spatial: UInt8
     public var windBlock: Bool
     public var ancEnabled: Bool
+    /// What the firmware lets a write change: bit 0 the noise level, bit 2
+    /// spatial audio. nil when the record came from a write's echo, which
+    /// leaves it out.
+    public var mutability: UInt8?
 
-    /// A custom slot with no mode in it. Firmware marks a slot "configured"
-    /// on its first write and never clears it, so the name is the only test.
+    public var levelEditable: Bool { editable && (mutability.map { $0 & 0x01 != 0 } ?? true) }
+    public var spatialEditable: Bool { editable && (mutability.map { $0 & 0x04 != 0 } ?? true) }
+
+    /// A custom slot with no mode in it. Deleted slots read "None".
     public var isEmpty: Bool
     {
         let n = name.trimmingCharacters(in: .whitespaces).lowercased()
@@ -56,8 +63,8 @@ public struct ModeConfig: Equatable, Sendable {
 
     /// Parses the 48-byte STATUS record of a GET or a mode listing:
     ///
-    ///   [0] index  [1-2] prompt  [3] editable  [4] configured  [5] ?
-    ///   [6-37] name (32 bytes, 0-terminated)  [38-41] ?
+    ///   [0] index  [1-2] prompt  [3] editable  [4] ?  [5] favorite
+    ///   [6-37] name (32 bytes, 0-terminated)  [38-40] ?  [41] mutability
     ///   [42] cnc  [43] auto cnc  [44] spatial  [45] copy of [3]
     ///   [46] wind block  [47] anc
     ///
@@ -67,19 +74,21 @@ public struct ModeConfig: Equatable, Sendable {
         if payload.count >= 48 {
             return ModeConfig(
                 index: payload[0], prompt: Array(payload[1 ... 2]),
-                editable: payload[3] != 0, configured: payload[4] != 0,
+                editable: payload[3] != 0, favorite: payload[5] != 0,
                 name: fixedString(payload[6 ..< 38]),
                 cncLevel: payload[42], autoCNC: payload[43] != 0, spatial: payload[44],
-                windBlock: payload[46] != 0, ancEnabled: payload[47] != 0
+                windBlock: payload[46] != 0, ancEnabled: payload[47] != 0,
+                mutability: payload[41]
             )
         }
         if payload.count >= 40 {
             return ModeConfig(
                 index: payload[0], prompt: Array(payload[1 ... 2]),
-                editable: true, configured: true,
+                editable: true, favorite: false,
                 name: fixedString(payload[3 ..< 35]),
                 cncLevel: payload[35], autoCNC: payload[36] != 0, spatial: payload[37],
-                windBlock: payload[38] != 0, ancEnabled: payload[39] != 0
+                windBlock: payload[38] != 0, ancEnabled: payload[39] != 0,
+                mutability: nil
             )
         }
         throw ParseError.tooShort(Function.modeConfig, payload.count, need: 40)
@@ -98,6 +107,21 @@ public struct ModeConfig: Equatable, Sendable {
         return out
     }
 
+    /// Sets the noise level. Noise cancellation goes on with it unless `anc`
+    /// says otherwise: the level does nothing while it is off, so a level
+    /// change that left it off would seem to do nothing.
+    public mutating func setNoiseLevel(_ level: UInt8, anc: Bool? = nil)
+    {
+        cncLevel = level
+        ancEnabled = anc ?? true
+    }
+
+    /// The record's noise settings, in the shape 31.10 reports them.
+    public var settings: AudioSettings
+    {
+        AudioSettings(cncLevel: cncLevel, autoCNC: autoCNC, spatial: spatial, windBlock: windBlock, ancEnabled: ancEnabled)
+    }
+
     /// The name to match user input against: the preset's fixed name for a
     /// preset, the stored name otherwise; lowercased.
     var displayNameForMatching: String
@@ -106,17 +130,21 @@ public struct ModeConfig: Equatable, Sendable {
         return name.lowercased()
     }
 
-    /// What a deleted slot is written back to.
+    /// What a deleted slot is written back to: the record an unused slot
+    /// carries from the factory.
     public static func empty(index: UInt8) -> ModeConfig
     {
         ModeConfig(
-            index: index, prompt: [0, 0], editable: true, configured: true, name: "None",
-            cncLevel: 0, autoCNC: false, spatial: 0, windBlock: false, ancEnabled: false
+            index: index, prompt: [0, 0], editable: true, favorite: false, name: "None",
+            cncLevel: 10, autoCNC: false, spatial: 0, windBlock: false, ancEnabled: true,
+            mutability: nil
         )
     }
 }
 
-/// The live settings of the active mode (31.10).
+/// The live settings of the active mode (31.10). Read only: writing them
+/// while a preset is active detaches the mode, leaving no mode selected and
+/// noise cancellation off, so changes go through the mode's own record.
 public struct AudioSettings: Equatable, Sendable {
     public var cncLevel: UInt8
     public var autoCNC: Bool
@@ -124,7 +152,7 @@ public struct AudioSettings: Equatable, Sendable {
     public var windBlock: Bool
     public var ancEnabled: Bool
 
-    /// [cnc, auto cnc, spatial, wind block, anc]; the SETGET payload is the same.
+    /// [cnc, auto cnc, spatial, wind block, anc].
     public static func parse(_ payload: [UInt8]) throws -> AudioSettings
     {
         try require(payload, 5, Function.audioSettings)
@@ -132,11 +160,6 @@ public struct AudioSettings: Equatable, Sendable {
             cncLevel: payload[0], autoCNC: payload[1] != 0, spatial: payload[2],
             windBlock: payload[3] != 0, ancEnabled: payload[4] != 0
         )
-    }
-
-    public func build() -> [UInt8]
-    {
-        [cncLevel, autoCNC ? 1 : 0, spatial, windBlock ? 1 : 0, ancEnabled ? 1 : 0]
     }
 }
 
@@ -150,6 +173,9 @@ public enum Presets {
     ]
 
     public static let customSlots: ClosedRange<UInt8> = 4 ... 10
+
+    /// What 31.3 reads when no mode is active.
+    public static let noMode: UInt8 = 0xFF
 
     public static func index(named name: String) -> UInt8?
     {

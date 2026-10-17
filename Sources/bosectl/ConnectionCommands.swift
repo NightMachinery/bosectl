@@ -1,4 +1,4 @@
-// What the headphones play from, where they route audio, and power.
+// What the headphones play from, pairing and power.
 
 import ArgumentParser
 import BMAP
@@ -31,29 +31,6 @@ struct Source: ParsableCommand {
 }
 
 func hostAddress() -> String? { Discovery.hostAddress() }
-
-struct Route: ParsableCommand {
-    static let configuration = CommandConfiguration(
-        abstract: "Move audio to another host the headphones are connected to.",
-        discussion: "Give the host's Bluetooth address, or 'here' for this Mac."
-    )
-
-    @OptionGroup var global: GlobalOptions
-
-    @Argument(help: "Host address, or 'here'.")
-    var host: String
-
-    func run() throws
-    {
-        global.apply()
-        let text = host == "here" ? (hostAddress() ?? "") : host
-        guard let bytes = parseAddress(text) else {
-            throw Failure.usage("not a Bluetooth address: \(host)")
-        }
-        try withHeadphones(global) { hp, _ in try hp.route(to: bytes) }
-        Output.emit(.object([("routed_to", .string(formatAddress(bytes)))])) { "routed to \(formatAddress(bytes))" }
-    }
-}
 
 struct Pair: ParsableCommand {
     static let configuration = CommandConfiguration(

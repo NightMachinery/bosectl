@@ -68,6 +68,7 @@ private func decode(_ packet: Packet) -> (String, JSON)?
         return ("battery", Battery.parse(p).json)
     case Function.currentMode:
         guard let index = p.first else { return nil }
+        if index == Presets.noMode { return ("mode", .object([("index", .null), ("preset", .null)])) }
         return ("mode", .object([("index", .int(Int(index))), ("preset", .optional(Presets.name(of: index)))]))
     case Function.audioSettings:
         return (try? AudioSettings.parse(p)).map { ("noise", $0.json) }
@@ -78,7 +79,7 @@ private func decode(_ packet: Packet) -> (String, JSON)?
     case Function.source:
         return (try? AudioSource.parse(p)).map { ("source", .object([("source", .string($0.kindName)), ("address", .optional($0.address))])) }
     case Function.multipoint:
-        return p.first.map { ("multipoint", .bool($0 & 0x02 != 0)) }
+        return p.first.map { ("multipoint", .bool($0 & 0x01 != 0)) }
     case Function.autoPause:
         return p.first.map { ("auto_pause", .bool($0 != 0)) }
     case Function.autoAnswer:
@@ -86,7 +87,7 @@ private func decode(_ packet: Packet) -> (String, JSON)?
     case Function.sidetone:
         return (try? Sidetone.parse(p)).map { ("sidetone", .string($0.name)) }
     case Function.voicePrompts:
-        return (try? VoicePrompts.parse(p)).map { ("voice_prompts", .object([("enabled", .bool($0.enabled)), ("language", .string($0.languageName))])) }
+        return (try? VoicePrompts.parse(p)).map { ("voice_prompts", $0.json) }
     default:
         return nil
     }
@@ -111,7 +112,7 @@ struct Dump: ParsableCommand {
         ("sidetone", Function.sidetone), ("auto pause", Function.autoPause),
         ("auto answer", Function.autoAnswer), ("battery", Function.battery),
         ("source", Function.source), ("current mode", Function.currentMode),
-        ("default mode", Function.defaultMode), ("favorites", Function.favorites),
+        ("favorites", Function.favorites),
         ("audio settings", Function.audioSettings),
     ]
 

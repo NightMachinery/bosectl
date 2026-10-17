@@ -5,6 +5,7 @@ import XCTest
 final class SimulatedModes: Requester {
     var modes: [UInt8: [UInt8]] = [:]
     var writes: [ModeConfig] = []
+    var current: UInt8 = 0
 
     init()
     {
@@ -23,6 +24,17 @@ final class SimulatedModes: Requester {
         case (Function.allModes, .start):
             replies = modes.keys.sorted().map { Packet(Function.modeConfig, .status, modes[$0]!) }
             replies.append(Packet(Function.allModes, .result))
+        case (Function.modeConfig, .get):
+            guard let index = packet.payload.first, let record = modes[index] else {
+                replies = [Packet(Function.modeConfig, .error, [DeviceErrorCode.invalidData.rawValue])]
+                break
+            }
+            replies = [Packet(Function.modeConfig, .status, record)]
+        case (Function.currentMode, .get):
+            replies = [Packet(Function.currentMode, .status, [current])]
+        case (Function.currentMode, .start):
+            current = packet.payload[0]
+            replies = [Packet(Function.currentMode, .result, [current])]
         case (Function.modeConfig, .setGet):
             let mode = try ModeConfig.parse(packet.payload)
             guard Presets.customSlots.contains(mode.index) else {
@@ -86,6 +98,49 @@ final class CustomModeTests: XCTestCase {
         XCTAssertTrue(try! hp.modes().first { $0.index == 4 }!.isEmpty)
         XCTAssertThrowsError(try hp.deleteCustomMode("quiet"))
         XCTAssertThrowsError(try hp.deleteCustomMode("nothing"))
+    }
+
+    func testPresetsRefuseNoiseChangesWithoutWriting()
+    {
+        let device = SimulatedModes()
+        device.current = 1
+        XCTAssertThrowsError(try Headphones(device).updateActiveMode { $0.cncLevel = 3 }) { error in
+            XCTAssertTrue(error is UsageError)
+        }
+        XCTAssertTrue(device.writes.isEmpty)
+    }
+
+    func testANewLevelTurnsNoiseCancellationOn()
+    {
+        let device = SimulatedModes()
+        let hp = Headphones(device)
+        let mode = try! hp.saveCustomMode("Commute") { $0.ancEnabled = false }
+        try! hp.setMode(mode.index)
+        let saved = try! hp.updateActiveMode { $0.setNoiseLevel(5) }
+        XCTAssertEqual(saved.cncLevel, 5)
+        XCTAssertTrue(saved.ancEnabled)
+    }
+
+    func testOtherChangesLeaveNoiseCancellationAlone()
+    {
+        let device = SimulatedModes()
+        let hp = Headphones(device)
+        let mode = try! hp.saveCustomMode("Commute") { $0.ancEnabled = false }
+        try! hp.setMode(mode.index)
+        XCTAssertFalse(try! hp.updateActiveMode { $0.windBlock = true }.ancEnabled)
+        // Turning it off together with a new level is honoured.
+        XCTAssertFalse(try! hp.updateActiveMode { $0.setNoiseLevel(2, anc: false) }.ancEnabled)
+    }
+
+    func testNoActiveModeIsReported()
+    {
+        let device = SimulatedModes()
+        device.current = Presets.noMode
+        let hp = Headphones(device)
+        XCTAssertNil(try hp.currentModeIndex())
+        XCTAssertThrowsError(try hp.updateActiveMode { $0.cncLevel = 3 }) { error in
+            XCTAssertTrue(error is UsageError)
+        }
     }
 
     func testFullSlotsAreReported()

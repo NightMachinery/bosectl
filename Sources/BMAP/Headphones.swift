@@ -32,6 +32,13 @@ public final class Headphones {
         try status(of: requester.request(Packet(address, .setGet, payload), accept: [], collect: .one, timeout: timeout), address)
     }
 
+    /// Throws `NotApplied` unless the echo of a write shows the new value:
+    /// some firmware acknowledges writes it then ignores.
+    func confirm(_ applied: Bool, _ address: Address) throws
+    {
+        if !applied { throw NotApplied(address: address) }
+    }
+
     /// Triggers an action with START.
     @discardableResult
     public func start(_ address: Address, _ payload: [UInt8] = [], accept: Set<Address> = [], collect: Collect = .one) throws -> [Packet]
@@ -60,7 +67,7 @@ public final class Headphones {
         fixedString(try get(Function.productName).dropFirst())
     }
 
-    public static let maxNameBytes = 31
+    public static let maxNameBytes = 30
 
     public func setName(_ name: String) throws
     {
@@ -68,7 +75,8 @@ public final class Headphones {
         guard !bytes.isEmpty, bytes.count <= Headphones.maxNameBytes else {
             throw UsageError("a name must be 1 to \(Headphones.maxNameBytes) bytes of UTF-8")
         }
-        try setGet(Function.productName, bytes)
+        let echo = try setGet(Function.productName, bytes)
+        try confirm(fixedString(echo.dropFirst()) == name, Function.productName)
     }
 
     // MARK: Battery
@@ -85,18 +93,14 @@ public final class Headphones {
         try VoicePrompts.parse(get(Function.voicePrompts))
     }
 
-    public func setVoicePrompts(_ prompts: VoicePrompts) throws
+    /// Firmware 10.12.12 acknowledges these writes without applying them, so
+    /// this throws `NotApplied` there.
+    @discardableResult
+    public func setVoicePrompts(_ prompts: VoicePrompts) throws -> VoicePrompts
     {
-        try setGet(Function.voicePrompts, prompts.build())
-    }
-
-    /// The active mode's noise level, 0 (most cancellation) to `max`.
-    public func cnc() throws -> (level: Int, max: Int)
-    {
-        // [steps, current, ...]: steps counts the positions, so max = steps - 1.
-        let p = try get(Function.cnc)
-        try require(p, 2, Function.cnc)
-        return (Int(p[1]), max(0, Int(p[0]) - 1))
+        let echoed = try VoicePrompts.parse(setGet(Function.voicePrompts, prompts.build()))
+        try confirm(echoed.writable == prompts.writable, Function.voicePrompts)
+        return echoed
     }
 
     public func eq() throws -> [EQBand]
@@ -107,7 +111,8 @@ public final class Headphones {
     public func setEQ(_ band: EQBand.ID, _ value: Int) throws
     {
         guard (-10 ... 10).contains(value) else { throw UsageError("EQ values range from -10 to 10") }
-        try setGet(Function.eq, EQBand.build(band, value))
+        let echo = EQBand.parseAll(try setGet(Function.eq, EQBand.build(band, value)))
+        try confirm(echo.first { $0.id == band.rawValue }?.value == value, Function.eq)
     }
 
     public func buttons() throws -> ButtonMapping
@@ -117,20 +122,26 @@ public final class Headphones {
 
     public func setButton(_ mapping: ButtonMapping) throws
     {
-        try setGet(Function.buttons, mapping.build())
+        let echo = try ButtonMapping.parse(setGet(Function.buttons, mapping.build()))
+        try confirm(echo.action == mapping.action, Function.buttons)
     }
 
-    /// Bit 1 of the first byte.
+    /// Bit 0 of the reply; the other bits are fixed capability flags (on
+    /// reads 0x07, off 0x06).
     public func multipoint() throws -> Bool
     {
         let p = try get(Function.multipoint)
         try require(p, 1, Function.multipoint)
-        return p[0] & 0x02 != 0
+        return p[0] & 0x01 != 0
     }
 
+    /// Flips bit 0 and writes the capability bits back unchanged.
     public func setMultipoint(_ on: Bool) throws
     {
-        try setGet(Function.multipoint, [on ? 1 : 0])
+        let p = try get(Function.multipoint)
+        try require(p, 1, Function.multipoint)
+        let echo = try setGet(Function.multipoint, [on ? p[0] | 0x01 : p[0] & ~0x01])
+        try confirm(echo.first.map { $0 & 0x01 != 0 } == on, Function.multipoint)
     }
 
     public func sidetone() throws -> Sidetone
@@ -140,7 +151,7 @@ public final class Headphones {
 
     public func setSidetone(_ level: Sidetone) throws
     {
-        try setGet(Function.sidetone, level.build())
+        try confirm(Sidetone.parse(setGet(Function.sidetone, level.build())) == level, Function.sidetone)
     }
 
     public func flag(_ address: Address) throws -> Bool
@@ -152,20 +163,23 @@ public final class Headphones {
 
     public func setFlag(_ address: Address, _ on: Bool) throws
     {
-        try setGet(address, [on ? 1 : 0])
+        let echo = try setGet(address, [on ? 1 : 0])
+        try confirm(echo.first.map { $0 != 0 } == on, address)
     }
 
     // MARK: Audio modes
 
-    public func currentModeIndex() throws -> UInt8
+    /// The active mode's index, or nil when no mode is active (the reply is
+    /// 0xFF), which leaves noise cancellation off.
+    public func currentModeIndex() throws -> UInt8?
     {
         let p = try get(Function.currentMode)
         try require(p, 1, Function.currentMode)
-        return p[0]
+        return p[0] == Presets.noMode ? nil : p[0]
     }
 
     /// Every mode slot, presets and custom, in index order. START 31.1 makes
-    /// the headphones send one 31.6 record per slot.
+    /// the headphones report all of block 31, one 31.6 record per slot.
     public func modes() throws -> [ModeConfig]
     {
         let answers = try start(Function.allModes, accept: [Function.modeConfig], collect: .all(quiet: 0.4))
@@ -178,6 +192,12 @@ public final class Headphones {
         return byIndex.keys.sorted().compactMap { byIndex[$0] }
     }
 
+    /// One mode slot.
+    public func mode(at index: UInt8) throws -> ModeConfig
+    {
+        try ModeConfig.parse(get(Function.modeConfig, [index]))
+    }
+
     /// Switches mode. `announce` makes the headphones speak the mode's name.
     public func setMode(_ index: UInt8, announce: Bool = false) throws
     {
@@ -188,7 +208,52 @@ public final class Headphones {
     @discardableResult
     public func writeMode(_ mode: ModeConfig) throws -> ModeConfig
     {
-        try ModeConfig.parse(setGet(Function.modeConfig, mode.build()))
+        let echo = try ModeConfig.parse(setGet(Function.modeConfig, mode.build()))
+        try confirm(echo.build() == mode.build(), Function.modeConfig)
+        return echo
+    }
+
+    /// Changes the noise settings of the active mode by rewriting its record.
+    /// Only custom modes can change: the presets are fixed. Returns the record
+    /// the headphones confirmed.
+    @discardableResult
+    public func updateActiveMode(_ change: (inout ModeConfig) -> Void) throws -> ModeConfig
+    {
+        guard let index = try currentModeIndex() else {
+            throw UsageError("no mode is active; switch to one first (bosectl mode NAME)")
+        }
+        let before = try mode(at: index)
+        var after = before
+        change(&after)
+        if after == before { return before }
+        guard before.editable else {
+            let name = Presets.name(of: index) ?? "mode \(index)"
+            throw UsageError(
+                "\(name) is a preset, and presets are fixed; make a custom mode instead "
+                    + "(bosectl profile set NAME --cnc LEVEL --activate)"
+            )
+        }
+        if after.cncLevel != before.cncLevel {
+            guard before.levelEditable else { throw UsageError("this mode's noise level is fixed") }
+        }
+        if after.spatial != before.spatial, !before.spatialEditable {
+            throw UsageError("this mode's spatial audio is fixed")
+        }
+        try validate(after)
+        return try writeMode(after)
+    }
+
+    private func validate(_ mode: ModeConfig) throws
+    {
+        guard (0 ... 10).contains(mode.cncLevel) else { throw UsageError("the noise level must be 0 to 10") }
+        guard !mode.name.isEmpty, Array(mode.name.utf8).count <= 31 else {
+            throw UsageError("a mode name must be 1 to 31 bytes of UTF-8")
+        }
+    }
+
+    public func audioSettings() throws -> AudioSettings
+    {
+        try AudioSettings.parse(get(Function.audioSettings))
     }
 
     // MARK: Custom modes
@@ -206,16 +271,18 @@ public final class Headphones {
             mode = existing
         } else {
             try refusePresetName(wanted, all)
-            guard let slot = all.first(where: \.isEmpty)?.index
-                ?? Presets.customSlots.first(where: { i in !all.contains { $0.index == i } })
-            else {
-                throw UsageError("all \(Presets.customSlots.count) custom slots are taken; delete a custom mode first")
+            guard let empty = all.first(where: \.isEmpty) else {
+                throw UsageError("every custom slot is taken; delete a custom mode first")
             }
-            // A new mode starts from what Quiet does.
-            mode = ModeConfig(
-                index: slot, prompt: [0, 0], editable: true, configured: true, name: wanted,
-                cncLevel: 0, autoCNC: false, spatial: Spatial.off.rawValue, windBlock: false, ancEnabled: true
-            )
+            // A new mode starts from what Quiet does, keeping the slot's own
+            // prompt bytes.
+            mode = empty
+            mode.name = wanted
+            mode.cncLevel = 0
+            mode.autoCNC = false
+            mode.spatial = Spatial.off.rawValue
+            mode.windBlock = false
+            mode.ancEnabled = true
         }
         let previousName = mode.name
         change(&mode)
@@ -225,10 +292,7 @@ public final class Headphones {
                 throw UsageError("a mode named '\(mode.name)' already exists")
             }
         }
-        guard (0 ... 10).contains(mode.cncLevel) else { throw UsageError("the noise level must be 0 to 10") }
-        guard !mode.name.isEmpty, Array(mode.name.utf8).count <= 31 else {
-            throw UsageError("a mode name must be 1 to 31 bytes of UTF-8")
-        }
+        try validate(mode)
         return try writeMode(mode)
     }
 
@@ -242,7 +306,9 @@ public final class Headphones {
             }
             throw UsageError("no custom mode named '\(name)'")
         }
-        try writeMode(.empty(index: mode.index))
+        var empty = ModeConfig.empty(index: mode.index)
+        empty.prompt = mode.prompt
+        try writeMode(empty)
         return mode.index
     }
 
@@ -256,33 +322,14 @@ public final class Headphones {
         }
     }
 
-    public func audioSettings() throws -> AudioSettings
-    {
-        try AudioSettings.parse(get(Function.audioSettings))
-    }
-
-    /// Changes the live settings of the active mode, keeping the rest.
-    @discardableResult
-    public func updateAudioSettings(_ change: (inout AudioSettings) -> Void) throws -> AudioSettings
-    {
-        var settings = try audioSettings()
-        change(&settings)
-        return try AudioSettings.parse(setGet(Function.audioSettings, settings.build()))
-    }
-
-    // MARK: Connections and power
+    // MARK: Connections
 
     public func source() throws -> AudioSource
     {
         try AudioSource.parse(get(Function.source))
     }
 
-    /// Moves the audio to another host the headphones are connected to.
-    public func route(to address: [UInt8]) throws
-    {
-        // 0x82: route "up" to the given host.
-        try start(Function.routing, [0x82] + address)
-    }
+    // MARK: Pairing and power
 
     public func enterPairingMode() throws
     {
@@ -307,6 +354,16 @@ public struct Battery: Equatable, Sendable {
             return Battery(percent: nil, raw: payload)
         }
         return Battery(percent: Int(level), raw: payload)
+    }
+}
+
+/// The headphones acknowledged a write but report the old value.
+public struct NotApplied: Error, CustomStringConvertible {
+    public var address: Address
+
+    public var description: String
+    {
+        "the headphones accepted the write to \(address) but did not apply it (this firmware may not support the change)"
     }
 }
 

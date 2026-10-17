@@ -17,6 +17,8 @@ func withHeadphones<T>(_ options: GlobalOptions, _ body: (Headphones, Target) th
             throw Failure.usage(error.description)
         } catch let error as ParseError {
             throw Failure(error.description)
+        } catch let error as NotApplied {
+            throw Failure(error.description)
         }
     }
 }
@@ -47,6 +49,25 @@ func signed(_ value: Int) -> String { value > 0 ? "+\(value)" : "\(value)" }
 extension Battery {
     var json: JSON { .object([("level_percent", .optional(percent))]) }
     var text: String { percent.map { "\($0)%" } ?? "NA" }
+}
+
+extension VoicePrompts {
+    var json: JSON
+    {
+        .object([
+            ("language", .string(languageName)),
+            ("announce_connections", .bool(announceConnections)),
+            ("announce_battery", .optional(announceBattery)),
+        ])
+    }
+
+    var text: String
+    {
+        var parts = [languageName]
+        if announceConnections { parts.append("connections") }
+        if announceBattery == true { parts.append("battery") }
+        return parts.joined(separator: ", ")
+    }
 }
 
 extension EQBand {
@@ -94,6 +115,7 @@ extension ModeConfig {
             ("name", .string(displayName)),
             ("preset", .bool(!editable)),
             ("empty", .bool(isEmpty)),
+            ("favorite", .bool(favorite)),
             ("cnc_level", .int(Int(cncLevel))),
             ("auto_cnc", .bool(autoCNC)),
             ("anc", .bool(ancEnabled)),
@@ -104,11 +126,13 @@ extension ModeConfig {
 }
 
 extension Headphones {
-    /// The active mode's name: a preset name, or the custom slot's own name.
-    func currentModeName(index: UInt8) -> String
+    /// A mode's name: a preset name, the custom slot's own name, or "none"
+    /// when no mode is active.
+    func modeName(index: UInt8?) -> String
     {
+        guard let index else { return "none" }
         if let preset = Presets.name(of: index) { return preset }
-        if let mode = try? modes().first(where: { $0.index == index }) { return mode.displayName }
+        if let mode = try? mode(at: index) { return mode.displayName }
         return "mode \(index)"
     }
 
@@ -117,6 +141,12 @@ extension Headphones {
     {
         if let index = Presets.index(named: text) { return index }
         let all = try modes()
+        return try resolveMode(text, in: all)
+    }
+
+    func resolveMode(_ text: String, in all: [ModeConfig]) throws -> UInt8
+    {
+        if let index = Presets.index(named: text) { return index }
         if let mode = all.first(where: { !$0.isEmpty && $0.displayName.lowercased() == text.lowercased() }) {
             return mode.index
         }

@@ -23,11 +23,11 @@ struct Bosectl: ParsableCommand {
             Mode.self, Modes.self, Profile.self,
             PresetShortcut<QuietPreset>.self, PresetShortcut<AwarePreset>.self,
             PresetShortcut<ImmersionPreset>.self, PresetShortcut<CinemaPreset>.self,
-            CNC.self, ANC.self, Wind.self, AutoCNC.self, SpatialCommand.self,
+            CNC.self, ANC.self, Wind.self, SpatialCommand.self,
             EQ.self, Name.self, SidetoneCommand.self, Multipoint.self,
             FlagCommand<AutoPauseSetting>.self, FlagCommand<AutoAnswerSetting>.self,
             Prompts.self, Buttons.self,
-            Source.self, Route.self, Pair.self, PowerOff.self,
+            Source.self, Pair.self, PowerOff.self,
             Devices.self, LinkCommand.self, Connect.self, Disconnect.self,
             Watch.self, Dump.self, Raw.self,
         ]

@@ -5,10 +5,15 @@ import XCTest
 final class FakeDevice: Requester {
     var replies: [Address: [Packet]] = [:]
     var sent: [Packet] = []
+    /// Answer every SETGET with its own payload, as a device that applies it.
+    var echoWrites = false
 
     func request(_ packet: Packet, accept: Set<Address>, collect: Collect, timeout: TimeInterval) throws -> [Packet]
     {
         sent.append(packet)
+        if echoWrites, packet.op == .setGet {
+            return [Packet(packet.address, .status, packet.payload)]
+        }
         var collector = AnswerCollector(request: packet, accept: accept, collect: collect)
         for reply in replies[packet.address] ?? [] {
             _ = try collector.feed(reply)
@@ -24,13 +29,16 @@ final class FakeDevice: Requester {
 }
 
 /// A 48-byte mode record as the headphones list it.
-func modeRecord(index: UInt8, name: String, editable: Bool, cnc: UInt8 = 0, wind: Bool = false, anc: Bool = true) -> [UInt8]
+func modeRecord(
+    index: UInt8, name: String, editable: Bool, cnc: UInt8 = 0, wind: Bool = false, anc: Bool = true, favorite: Bool = false
+) -> [UInt8]
 {
     var p = [UInt8](repeating: 0, count: 48)
     p[0] = index
     p[3] = editable ? 1 : 0
-    p[4] = 1
+    p[5] = favorite ? 1 : 0
     p.replaceSubrange(6 ..< 38, with: fixedField(name, size: 32))
+    p[41] = editable ? 0x1d : 0x00 // what the QC Ultra 2 reports
     p[42] = cnc
     p[45] = editable ? 1 : 0 // mirrors the editable flag; not wind block
     p[46] = wind ? 1 : 0
@@ -67,11 +75,34 @@ final class HeadphonesTests: XCTestCase {
         XCTAssertFalse(mode.windBlock)
     }
 
+    func testParsesARecordCapturedFromTheHeadphones()
+    {
+        // Aware, as a QC Ultra 2 on firmware 10.12.12 lists it.
+        let aware = try! ModeConfig.parse(Hex.decode(
+            "0100020000014177617265000000000000000000000000000000000000000000000000000000000000020a0100000001"
+        )!)
+        XCTAssertEqual(aware.index, 1)
+        XCTAssertEqual(aware.name, "Aware")
+        XCTAssertFalse(aware.editable)
+        XCTAssertTrue(aware.favorite)
+        XCTAssertEqual(aware.cncLevel, 10)
+        XCTAssertFalse(aware.levelEditable)
+        let empty = try! ModeConfig.parse(Hex.decode(
+            "0400000100004e6f6e65000000000000000000000000000000000000000000000000000000000000001d0a0000010001"
+        )!)
+        XCTAssertTrue(empty.isEmpty)
+        XCTAssertTrue(empty.levelEditable)
+        XCTAssertTrue(empty.spatialEditable)
+        XCTAssertFalse(empty.windBlock)
+        XCTAssertEqual(empty.settings, ModeConfig.empty(index: 4).settings)
+    }
+
     func testModeRecordRoundTripsThroughTheWriteLayout()
     {
         let mode = ModeConfig(
-            index: 6, prompt: [0, 13], editable: true, configured: true, name: "Focus",
-            cncLevel: 2, autoCNC: true, spatial: Spatial.head.rawValue, windBlock: true, ancEnabled: false
+            index: 6, prompt: [0, 13], editable: true, favorite: false, name: "Focus",
+            cncLevel: 2, autoCNC: true, spatial: Spatial.head.rawValue, windBlock: true, ancEnabled: false,
+            mutability: nil
         )
         let payload = mode.build()
         XCTAssertEqual(payload.count, 40)
@@ -86,13 +117,15 @@ final class HeadphonesTests: XCTestCase {
         XCTAssertEqual(fixedString(field), String(repeating: "é", count: 15))
     }
 
-    func testAudioSettingsUpdateKeepsTheOtherFields()
+    func testMultipointIsBitZeroAndKeepsTheOtherBits()
     {
         let fake = FakeDevice()
-        fake.reply(Function.audioSettings, .status, [3, 0, 1, 1, 1])
+        fake.reply(Function.multipoint, .status, [0x06])
+        fake.echoWrites = true
         let hp = Headphones(fake)
-        _ = try? hp.updateAudioSettings { $0.cncLevel = 7 }
-        XCTAssertEqual(fake.sent.last, Packet(Function.audioSettings, .setGet, [7, 0, 1, 1, 1]))
+        XCTAssertFalse(try hp.multipoint())
+        try! hp.setMultipoint(true)
+        XCTAssertEqual(fake.sent.last, Packet(Function.multipoint, .setGet, [0x07]))
     }
 
     func testBatteryWithoutAReadingIsNil()
@@ -115,23 +148,32 @@ final class HeadphonesTests: XCTestCase {
     {
         XCTAssertEqual(EQBand.build(.treble, -2), [0xfe, 2])
         XCTAssertEqual(EQBand.parseAll([0xf6, 0x0a, 0xfd, 0, 0xf6, 0x0a, 0x00, 1]).map(\.value), [-3, 0])
-        XCTAssertEqual(try VoicePrompts.parse([0x21]), VoicePrompts(enabled: true, language: 1))
-        XCTAssertEqual(VoicePrompts(enabled: false, language: 4).build(), [0x04])
+        let prompts = try! VoicePrompts.parse(Hex.decode("41000081020001")!)
+        XCTAssertEqual(prompts.languageName, "US English")
+        XCTAssertFalse(prompts.announceConnections)
+        XCTAssertEqual(prompts.announceBattery, true)
+        XCTAssertTrue(prompts.defaultLanguage)
+        XCTAssertEqual(prompts.build(), [0x01, 0x01])
         XCTAssertEqual(try Sidetone.parse([1, 2]), .medium)
+        XCTAssertEqual(try Sidetone.parse([1, 3, 0x0f]), .low)
         XCTAssertEqual(Sidetone.low.build(), [1, 3])
         let source = try! AudioSource.parse([0, 3, 1, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff])
         XCTAssertEqual(source.address, "aa:bb:cc:dd:ee:ff")
         XCTAssertEqual(source.kindName, "bluetooth")
-        let buttons = try! ButtonMapping.parse([0x80, 0x04, 0x02, 0b0000_0110, 0, 0x02, 0])
-        XCTAssertEqual(buttons.supported, [1, 2, 17])
+        // The shortcut button of a QC Ultra 2, set to the voice assistant.
+        let buttons = try! ButtonMapping.parse(Hex.decode("8009010009400200000000")!)
+        XCTAssertEqual(buttons.action, 1)
+        XCTAssertEqual(buttons.supported, [1, 14, 16, 19])
+        XCTAssertEqual(try ButtonMapping.parse([0x80, 0x09, 0x0e]).supported, [])
     }
 
-    func testCNCReadsLevelAndRange()
+    func testIgnoredWritesAreReported()
     {
         let fake = FakeDevice()
-        fake.reply(Function.cnc, .status, [11, 4, 1])
-        let cnc = try! Headphones(fake).cnc()
-        XCTAssertEqual(cnc.level, 4)
-        XCTAssertEqual(cnc.max, 10)
+        fake.reply(Function.voicePrompts, .status, Hex.decode("41000081020000")!)
+        let hp = Headphones(fake)
+        var prompts = try! hp.voicePrompts()
+        prompts.announceConnections = true
+        XCTAssertThrowsError(try hp.setVoicePrompts(prompts)) { XCTAssertTrue($0 is NotApplied) }
     }
 }
