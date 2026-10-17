@@ -120,8 +120,17 @@ public final class Session: NSObject, IOBluetoothRFCOMMChannelDelegate, Requeste
         guard let channel, !closed else { throw BluetoothError.closedByPeer }
         var bytes = packet.encoded()
         onTraffic?(true, packet)
-        let status = bytes.withUnsafeMutableBytes { buffer in
-            channel.writeSync(buffer.baseAddress, length: UInt16(buffer.count))
+        // A channel that has just opened sometimes refuses its first write
+        // (kIOReturnUnderrun) and takes the same bytes a moment later. A
+        // refused write sent nothing, so trying again cannot repeat it.
+        var status = kIOReturnSuccess
+        for attempt in 0 ..< 4 {
+            let pause = Date().addingTimeInterval(0.1 * Double(attempt))
+            while Date() < pause, !closed { pump(until: pause) }
+            status = bytes.withUnsafeMutableBytes { buffer in
+                channel.writeSync(buffer.baseAddress, length: UInt16(buffer.count))
+            }
+            if status == kIOReturnSuccess || closed { break }
         }
         guard status == kIOReturnSuccess else { throw BluetoothError.writeFailed(status) }
     }

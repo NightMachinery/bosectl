@@ -348,5 +348,12 @@ public enum BluetoothError: Error, CustomStringConvertible {
 
 func ioReturnName(_ status: IOReturn) -> String
 {
-    String(format: "IOReturn 0x%08x", UInt32(bitPattern: status))
+    let names: [IOReturn: String] = [
+        kIOReturnError: "error", kIOReturnNoDevice: "no device", kIOReturnBusy: "busy",
+        kIOReturnTimeout: "timeout", kIOReturnNotOpen: "not open", kIOReturnNotReady: "not ready",
+        kIOReturnNotPermitted: "not permitted", kIOReturnUnderrun: "underrun", kIOReturnAborted: "aborted",
+        kIOReturnNotResponding: "not responding", kIOReturnNoResources: "no resources",
+    ]
+    let hex = String(format: "IOReturn 0x%08x", UInt32(bitPattern: status))
+    return names[status].map { "\(hex), \($0)" } ?? hex
 }
