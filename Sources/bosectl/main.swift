@@ -30,6 +30,7 @@ struct Bosectl: ParsableCommand {
             VolumeCommand.self, Media.self,
             Source.self, Hosts.self, Pair.self, PowerOff.self,
             Devices.self, LinkCommand.self, Connect.self, Disconnect.self,
+            Apply.self,
             Watch.self, Dump.self, Raw.self,
         ]
     )

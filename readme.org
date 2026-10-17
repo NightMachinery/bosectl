@@ -88,6 +88,11 @@ bosectl hosts                          # which are linked, which is playing
 bosectl hosts disconnect phone         # by name substring or address
 bosectl hosts connect phone
 
+# many settings at once
+bosectl --json status > desk.json      # save everything
+bosectl apply desk.json                # restore it later
+echo '{"mode": "aware", "sidetone": "high"}' | bosectl apply -
+
 # pairing and power
 bosectl pair                           # discoverable; drops the second host
 bosectl pair off
@@ -152,6 +157,25 @@ under =--json=. The exit status says what happened: =0= success, =1= failure,
 
 Global options (=--json=, =--mac=, =--device=, =--timeout=, =--trace=,
 =--auto-connect=, =--color=) may go before or after the command.
+
+** Settings files
+
+=bosectl apply= takes JSON in the shape =bosectl --json status= prints, so a
+saved status restores as it is. A hand-written file names only what it
+changes:
+
+#+begin_src json
+{"mode": "Commute", "volume": 8, "eq": {"bass": 3, "treble": -1}, "sidetone": "low"}
+#+end_src
+
+The keys are =mode= (a name, or =mode_index=), =noise= (=cnc_level=, =anc=,
+=wind_block=, =spatial=, =auto_cnc=; these act on the mode the file switches
+to, so it must be a custom one), =volume=, =eq= (the list status prints, or an
+object of bands), =sidetone=, =multipoint=, =auto_pause=, =auto_answer= and
+=name=. What no write can change, such as battery, firmware, hosts and voice
+prompts, is skipped. An unknown key or a bad value fails the whole file
+before anything is sent, and settings that already match are left alone, so
+applying the same file twice changes nothing the second time.
 
 ** Commands never connect on their own
 
