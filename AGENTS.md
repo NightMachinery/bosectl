@@ -39,6 +39,9 @@ commit of a change, not while iterating.
 - Protocol knowledge may come from any existing implementation, but code is
   written here from scratch; never paste code from projects without a
   compatible license.
+- Do not name third-party projects, their authors or their URLs anywhere in
+  the repo: code, docs or commit messages. Credit prior work in general terms
+  ("several open-source projects").
 - Verify against real hardware where possible. The headphones must be linked
   to this Mac, and the Bose app on a phone may compete for the control channel.
 - Keep `readme.org` and `docs/protocol.org` updated alongside code changes.
