@@ -1,0 +1,220 @@
+#+title: bosectl: Bose headphones from the macOS command line
+
+Observe and change every setting of Bose headphones from macOS: noise modes
+and custom modes, equalizer, volume, battery, the hosts the headphones are
+paired with, buttons, and more. Built and tested with the QuietComfort Ultra
+Headphones (2nd Gen); other models that speak Bose's BMAP protocol are
+recognised but untested.
+
+Bose ships no macOS app. The headphones, however, speak BMAP over a Bluetooth
+Classic RFCOMM channel that any paired host may use. =bosectl= is a native
+Swift implementation of that protocol, written from scratch from what several
+reverse-engineering projects found and checked on real hardware. See
+[[file:docs/protocol.org][docs/protocol.org]] for the protocol itself.
+
+It follows the conventions of its sibling [[https://github.com/NightMachinery/sonyctl][sonyctl]]: results on stdout,
+=--json= for scripts, fixed exit statuses, and no command that brings the
+Bluetooth link up behind your back.
+
+* Install
+
+** From a release
+
+Each tagged release publishes stripped macOS binaries: =arm64= for Apple
+Silicon, =x86_64= for Intel, and =universal= for both.
+
+#+begin_src sh
+v=v0.1.0
+curl -fLO "https://github.com/NightMachinery/bosectl/releases/download/$v/bosectl-macos-arm64"
+xattr -d com.apple.quarantine bosectl-macos-arm64   # downloaded binaries are unsigned
+chmod +x bosectl-macos-arm64
+mv bosectl-macos-arm64 ~/.local/bin/bosectl
+#+end_src
+
+The binaries are not code-signed or notarized, so macOS quarantines them on
+download; the =xattr= line clears that. =SHA256SUMS.txt= is attached to each
+release. They need macOS 11 or newer.
+
+** From source
+
+Needs macOS and a Swift 5.9 toolchain (Xcode or the Command Line Tools).
+
+#+begin_src sh
+./install.sh                 # -> ~/.local/bin/bosectl
+./install.sh /usr/local      # -> /usr/local/bin/bosectl
+swift test                   # unit tests; no headphones needed
+#+end_src
+
+* Usage
+
+#+begin_src sh
+bosectl status                         # battery, mode, volume, every setting
+bosectl battery                        # battery: 30%
+bosectl info                           # model, colour, firmware, serial
+
+# modes
+bosectl quiet                          # also: aware, immersion, cinema
+bosectl mode                           # the current mode
+bosectl mode Commute                   # a custom mode, by name
+bosectl modes                          # every slot (--all for the empty ones)
+bosectl profile set Commute --cnc 4 --wind off --spatial room --activate
+bosectl profile set Commute --rename Train
+bosectl profile rm Train
+bosectl favorites add cinema           # the modes the mode button cycles through
+
+# noise settings of the active custom mode
+bosectl cnc 6                          # 0 cancels most, 10 lets most in
+bosectl anc off
+bosectl wind on
+bosectl spatial head                   # off, room or head
+
+# audio
+bosectl volume 12                      # also: volume up, volume down 3
+bosectl media pause                    # play, pause, next, previous, stop
+bosectl eq 3 0 -2                      # bass mid treble; 'eq flat' resets
+bosectl eq --treble -1
+
+# settings
+bosectl name "Studio"
+bosectl sidetone low                   # your own voice on calls
+bosectl multipoint on
+bosectl auto-pause off
+bosectl auto-answer on
+bosectl buttons set spatial-audio-mode
+bosectl prompts                        # voice prompt language and announcements
+
+# hosts: the phones and computers the headphones remember
+bosectl hosts                          # which are linked, which is playing
+bosectl hosts disconnect phone         # by name substring or address
+bosectl hosts connect phone
+
+# this Mac's own link
+bosectl link                           # exit 0 if linked, 3 if not
+bosectl connect
+bosectl disconnect
+
+# protocol work
+bosectl watch                          # change notifications, as JSON lines
+bosectl dump                           # GET every known function
+bosectl raw 31.3 get                   # one raw packet
+#+end_src
+
+** Presets are fixed; custom modes are not
+
+The headphones keep four preset modes (quiet, aware, immersion, cinema) and up
+to seven custom ones. Only custom modes can change their noise level, noise
+cancellation, wind block or spatial audio, and the firmware refuses writes to a
+preset. So =cnc=, =anc=, =wind= and =spatial= act on the active mode, and fail
+with a hint when that is a preset:
+
+#+begin_src sh
+bosectl quiet && bosectl cnc 3
+# bosectl: quiet is a preset, and presets are fixed; make a custom mode instead (bosectl profile set NAME --cnc LEVEL --activate)
+#+end_src
+
+These commands rewrite the active mode's own record. The headphones also have
+a "live settings" register that looks like the obvious target and that other
+tools write; writing it while a preset is active detaches the mode and leaves
+noise cancellation off.
+
+A new noise level turns noise cancellation on with it, because the level does
+nothing while it is off; pass =--anc off= alongside =--cnc= to keep it off.
+Wind block bypasses noise cancellation entirely, so a level change is inaudible
+while it is on.
+
+** Machine-readable output
+
+=--json= makes every command print one JSON value on stdout. The battery has
+the same shape as =sonyctl='s, so one script can watch both:
+
+#+begin_src sh
+bosectl --json battery
+# {"batteries":[{"part":"battery","level_percent":30,"charging":"unknown"}]}
+
+bosectl --json status | jq .volume
+bosectl --json hosts | jq -r '.hosts[] | select(.playing) | .name'
+#+end_src
+
+=level_percent= is =null= when the headphones report no level. In =jq=,
+=null < 35= is true, so guard on =null= before comparing against a threshold.
+=charging= is ="unknown"= until the byte that carries it is confirmed.
+
+Diagnostics go to stderr, as plain text normally and as ={"error": "..."}=
+under =--json=. The exit status says what happened: =0= success, =1= failure,
+=2= usage error, =3= the headphones are not connected to this Mac.
+
+Global options (=--json=, =--mac=, =--device=, =--timeout=, =--trace=,
+=--auto-connect=, =--color=) may go before or after the command.
+
+** Commands never connect on their own
+
+Every command that talks to the headphones needs this Mac to be linked to them
+already. If it is not, the command fails at once with exit status =3= and does
+not bring the link up. Opening the control channel would otherwise page the
+headphones and take over the Mac's audio output, which no read-only command
+should do, and which would make polling from =cron= impossible.
+
+#+begin_src sh
+bosectl --auto-connect battery         # connect first, deliberately
+bosectl connect && bosectl quiet       # the same, in two steps
+#+end_src
+
+So exit status =3= is the ordinary "they are off or elsewhere" answer, and it
+arrives in milliseconds.
+
+** This Mac's link and the headphones' hosts
+
+Two different layers:
+
+- =connect= and =disconnect= open and close this Mac's Bluetooth link. The
+  headphones keep their other hosts.
+- =hosts connect= and =hosts disconnect= ask the headphones to page or drop
+  /another/ host, such as your phone. They refuse this Mac, whose link the first
+  pair handles; macOS pages straight back after a drop from the headphones'
+  side.
+
+The headphones stay linked to at most two hosts at once. There is no command
+to move audio between two linked hosts: this model does not support it. Drop
+the one playing and the other takes over.
+
+** Device selection
+
+By default =bosectl= picks the first paired Bose device, preferring one that is
+connected. =--device SUBSTR= picks by name and =--mac 00:11:22:33:44:55= by
+address. =bosectl devices= lists what is paired.
+
+* Things to know
+
+- *One control session at a time.* A second process that opens the channel
+  while =watch= runs takes it over, and =watch= then hears nothing more. The
+  Bose app on a phone linked to the same headphones also competes for it.
+- *Voice prompts are read-only on firmware 10.12.12.* The headphones
+  acknowledge a change and keep the old value; =prompts= then fails rather
+  than report success. Every write is checked this way: the headphones echo
+  the stored value, and =bosectl= compares it with what it asked for.
+- *Automatic noise level* (ActiveSense) belongs to the aware preset. The
+  firmware refuses it on custom modes.
+- *=media=* reaches the host through the headphones, as their own buttons do.
+  It has only been tried with nothing playing, when the headphones answer
+  "invalid data".
+- *=power-off= is a shutdown.* Nothing can turn the headphones back on
+  remotely.
+- *Bluetooth permission.* Command-line tools inherit the Bluetooth permission
+  of the terminal that runs them. If nothing is found, grant your terminal
+  Bluetooth access in System Settings, Privacy & Security, Bluetooth.
+
+* Releasing
+
+Releases are cut by pushing a version tag; GitHub Actions
+([[file:.github/workflows/release.yml][.github/workflows/release.yml]]) runs the tests, builds the binaries and
+publishes them.
+
+1. Bump =let version= in =Sources/bosectl/main.swift= and commit.
+2. =git tag vX.Y.Z && git push origin master --tags=
+
+Running the workflow by hand (=workflow_dispatch=) builds and uploads the
+binaries as workflow artifacts without publishing a release.
+
+* License
+
+MIT; see [[file:LICENSE][LICENSE]].

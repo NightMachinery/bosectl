@@ -1,0 +1,260 @@
+#+title: BMAP on the QuietComfort Ultra Headphones (2nd Gen)
+
+What =bosectl= knows about BMAP, Bose's control protocol, and how it learned
+it. Firmware 10.12.12 unless stated otherwise.
+
+The starting point was the work of several open-source projects that took the
+protocol apart, from Bose's apps and from captures. Their findings disagree in
+places and some do not hold on this model, so everything below was checked
+against real headphones, and the notes say where this firmware differs from
+what is commonly assumed. Where a detail is still a guess, it says so.
+
+* Transport
+
+BMAP runs over Bluetooth Classic RFCOMM. The headphones publish it as a plain
+Serial Port service (UUID =0x1101=); the 128-bit BMAP UUID that tools on other
+platforms search for is not among the SDP records macOS caches. =bosectl=
+walks =IOBluetoothDevice.services= for a Serial Port record and takes its
+RFCOMM channel number. (Asking IOBluetooth for a record by the 128-bit UUID is
+worse than useless: it matched a Sony headset.)
+
+Opening the channel brings the baseband link up if it is down, which wakes the
+headphones and hands them the Mac's audio. That is why =bosectl= checks
+=isConnected= before opening anything and never connects implicitly.
+
+The first write on a fresh channel sometimes fails with =kIOReturnUnderrun=. A
+refused write sends nothing, so retrying it is safe; =bosectl= tries four
+times, 0.1 s apart and lengthening.
+
+The headphones serve one control session at a time. A second process that
+opens the channel takes it over: the first one's notifications stop.
+
+* Framing
+
+Every packet is
+
+#+begin_example
+[block, function, flags, length, payload...]
+flags = deviceID << 6 | port << 4 | operator
+#+end_example
+
+A function is addressed by the pair (block, function), written =31.3=. The
+length byte caps a payload at 255 bytes. =deviceID= and =port= are zero
+throughout.
+
+The operators:
+
+- 0 SET, 1 GET, 2 SETGET, 5 START: requests.
+- 3 STATUS: the answer to GET and SETGET, and what the headphones send
+  unprompted when something changes.
+- 6 RESULT: the final answer to a START.
+- 7 PROCESSING: a START was accepted and is under way.
+- 4 ERROR: the payload's first byte is the reason. 1 bad length, 3 block not
+  supported, 4 function not supported, 5 operator not supported (also what an
+  unauthenticated request gets), 6 invalid data, 7 data unavailable, 8 runtime
+  error, 10 invalid state, 15 invalid transition, 20 insecure transport.
+
+A SETGET writes and answers with the stored value. =bosectl= compares that echo
+with what it asked for and reports a write that did not stick, rather than
+trusting the acknowledgement: on this firmware some writes are acknowledged and
+ignored (see voice prompts).
+
+A START answers in one of three ways, and the client has to know which:
+
+- RESULT, possibly after PROCESSING (31.3, switching modes).
+- PROCESSING only, with the effect visible later (4.1 and 4.2, host
+  connections). Waiting for a RESULT here only times out.
+- A series of STATUS packets for /other/ functions (31.1, which lists every
+  mode as one 31.6 record each, then goes quiet).
+
+A STATUS push for the same function can land while a START is waiting. It is
+not the answer.
+
+* Authentication
+
+Bose's app authenticates with a challenge in block 18 before it changes
+anything. Without that, most writes fail with error 5. On this model, though,
+a lot is open:
+
+- Every GET.
+- SETGET on all of block 1 and block 31, on 5.5 (volume) and on 9.2
+  (notifications).
+- START on 31.3 (switch mode), 4.1, 4.2 (host connect and disconnect), 4.8
+  (pairing mode) and 7.4 (power).
+
+That covers everything =bosectl= does, so it does not authenticate, and it
+never uses plain SET, which is the operator authentication gates.
+
+* Functions
+
+The payload layouts below are the ones =bosectl= reads and writes. Bytes are
+numbered from 0; =?= marks bytes whose meaning is unknown.
+
+** Block 0: product information
+
+- 0.1 BMAP version, ASCII.
+- 0.3 product id: =[id hi, id lo, variant]=. The QC Ultra 2 is =0x4082=. The
+  variant is the colour: 1 Black, 2 White Smoke, 3 Driftwood Sand, 4 Midnight
+  Violet, 5 Desert Gold. =Sources/BMAP/Catalog.swift= lists other product
+  ids from the same sources; only =0x4082= has been seen.
+- 0.5 firmware version, ASCII.
+- 0.7 serial number, ASCII.
+- 0.15 model name, ASCII.
+
+** Block 1: settings
+
+- 1.2 name. GET: =[?, name...]=. SETGET with the bare UTF-8 name, at most 30
+  bytes.
+- 1.3 voice prompts. GET: 7 bytes. Byte 0 carries the language in bits 0 to 4,
+  connection announcements in bit 5 and "this is the default language" in bit
+  6; byte 6 is the power-on battery announcement. SETGET takes
+  =[bit 5 | language, battery announcement]=. *On 10.12.12 the write is
+  acknowledged and ignored*: the echo carries the old value.
+- 1.5 the old noise level register. Read-only here; noise control moved to
+  block 31.
+- 1.7 equalizer. GET: one =[min, max, current, band]= group per band, signed,
+  bands 0 bass, 1 mid, 2 treble, range -10 to 10. SETGET =[value, band]= sets
+  one band.
+- 1.9 shortcut button. GET: =[button, event, action, supported...]=, where
+  =supported= is a big-endian u32 in which bit /n/ means action /n/ is
+  accepted. (Read little-endian it lists actions the app never offers and
+  leaves out the configured one.) On this model the button accepts vpa,
+  disabled, spotify-go and spatial-audio-mode. SETGET
+  =[button, event, action]=.
+- 1.10 multipoint: bit 0 of byte 0. The other bits are not ours to change, so
+  =bosectl= reads, flips bit 0 and writes the byte back.
+- 1.11 sidetone. GET =[flags, level]=, SETGET =[persist, level]=. Level 0 off, 1
+  high, 2 medium, 3 low.
+- 1.24 auto-pause and 1.27 auto-answer: one byte, 0 or 1.
+
+** Block 2: status
+
+- 2.2 battery. Byte 0 is the level in percent; 0xFF means no reading. Which of
+  the following bytes says the headphones are charging has not been confirmed
+  on a charging set, so =bosectl= reports charging as unknown.
+
+** Block 4: the hosts the headphones remember
+
+- 4.4 remembered hosts: =[?, address, address...]=, six bytes each. The order
+  changes between reads, so nothing may be keyed on a position.
+- 4.5 one host: GET with the address as payload, answer
+  =[address, status, ?, ?, name...]=. Bit 0 of =status= is "linked now".
+- 4.9 the address of the host asking, which is how =bosectl= finds this Mac in
+  the list.
+- 4.1 connect a host: START =[0x00, address]=. Answers PROCESSING and nothing
+  more; poll 4.5 until the host shows as linked. =bosectl hosts connect= waits
+  up to 15 s by default.
+- 4.2 disconnect a host: START =[address]=, answered with PROCESSING.
+  Disconnecting the Mac that asks is pointless: macOS pages straight back.
+- 4.8 pairing mode: START =[0x01]=.
+
+Commonly listed but absent here: 4.12, routing audio to a chosen host. START
+=[0x82, address]= answers "function not supported". With two hosts linked,
+the one that starts playing takes over.
+
+** Block 5: audio
+
+- 5.1 audio source: =[?, ?, n, address...]=. Byte 2 is either the source kind
+  (1 Bluetooth, 2 aux) or the number of addresses; with one Bluetooth host the
+  two readings agree, so =bosectl= takes every whole address that follows.
+- 5.3 media control: START =[action]=, 0 stop, 1 play, 2 pause, 3 next, 4
+  previous. A GET returns the supported actions as a bit mask. With nothing
+  playing the headphones answer "invalid data"; behaviour during playback is
+  untested.
+- 5.4 codec, read only.
+- 5.5 volume: GET and SETGET answer =[max, level]=; SETGET takes =[level]=. The
+  level is the AVRCP absolute volume, so it moves with the Mac's own volume
+  slider.
+
+** Block 7: control
+
+- 7.4 power: START =[0x00]= turns the headphones off. Nothing turns them back
+  on remotely.
+
+** Block 9: notifications
+
+Without a subscription the headphones push nothing. 9.2 SETGET
+=[op, mask]= subscribes, where =op= is 1 enable, 2 disable or 0 overwrite and
+=mask= is a big-endian u32 in which bit /n/ means block /n/. The subscription
+lasts as long as the channel. =bosectl watch= subscribes to blocks 1, 2, 4, 5
+and 31.
+
+** Block 18: authentication
+
+Its GETs are open and carry two identifiers: 18.12 a codename and 18.13 a
+platform name, both ASCII. =bosectl info= shows them.
+
+** Block 31: modes
+
+The headphones have eleven mode slots. Slots 0 to 3 are the presets (0 quiet,
+1 aware, 2 immersion, 3 cinema); 4 to 10 hold custom modes.
+
+- 31.1 START lists every slot, as one 31.6 STATUS record each.
+- 31.3 the active mode. GET answers =[index]=, and 0xFF means none is active.
+  START =[index, announce]= switches, with =announce= 1 to play the mode's
+  voice prompt.
+- 31.4 the default mode. A GET times out on this firmware.
+- 31.6 one mode's record. GET with =[index]=; SETGET with the 40-byte record
+  below writes it.
+- 31.8 favorites, the modes the mode button cycles through:
+  =[slot count, mask...]=, where the mask is stored byte-reversed: its last byte
+  holds modes 0 to 7, the byte before it 8 to 15. SETGET with the same layout.
+- 31.10 the live noise settings: =[cnc, auto cnc, spatial, wind block, anc]=.
+  Read it, never write it (see below).
+
+A mode record, as GET and 31.1 return it (48 bytes):
+
+#+begin_example
+[0] index        [1-2] voice prompt   [3] editable    [4] ?
+[5] favorite     [6-37] name, 32 bytes, zero-terminated
+[38-40] ?        [41] mutability      [42] noise level
+[43] auto cnc    [44] spatial         [45] copy of [3]
+[46] wind block  [47] anc
+#+end_example
+
+and as SETGET takes it, and echoes it back (40 bytes):
+
+#+begin_example
+[0] index        [1-2] voice prompt   [3-34] name, 32 bytes
+[35] noise level [36] auto cnc        [37] spatial
+[38] wind block  [39] anc
+#+end_example
+
+The fields:
+
+- Noise level: 0 cancels the most, 10 lets the most in.
+- Spatial: 0 off, 1 room (a fixed stage), 2 head (follows head movement).
+- Mutability, byte 41: what a write may change. Bit 0 is the noise level, bit 2
+  spatial audio.
+- Editable, byte 3: 0 for the presets, 1 for custom modes.
+- A deleted slot reads as a mode named "None" with the noise level at 10 and
+  noise cancellation on. Deleting means writing that record back, keeping the
+  slot's own voice prompt.
+
+** Changing the noise settings
+
+*Never write 31.10.* It looks like the obvious register for "change the noise
+level now", and other tools write it. Writing it with a preset active detaches
+the preset (31.3 then reads 0xFF) and leaves noise cancellation off.
+
+The presets cannot change at all: a SETGET on their record fails with error 8
+(runtime error). Custom modes can, so =bosectl= changes the noise level, noise
+cancellation, wind block and spatial audio by a read-modify-write of the active
+mode's 31.6 record, after checking the mutability bits.
+
+Three firmware rules surfaced along the way:
+
+- The noise level only matters while noise cancellation is on, so a level
+  change has to turn it on with it, or it seems to do nothing.
+- Wind block bypasses noise cancellation entirely, which makes a level change
+  inaudible while it is on.
+- Automatic noise level (ActiveSense) is a feature of the aware preset. A
+  custom mode with it set is refused.
+
+* What is not known yet
+
+- Which byte of 2.2 reports charging.
+- Whether 5.3 controls playback while something is playing.
+- The unknown bytes in the mode record, 5.1 and 4.5.
+- How much of this holds on other BMAP headphones. The function numbers are
+  shared across Bose's recent models; payload details may not be.
