@@ -20,7 +20,8 @@ commit of a change, not while iterating.
   No I/O, so everything here is unit-tested offline (`swift test`) against
   scripted and simulated devices.
 - `Sources/BMAPBluetooth`: IOBluetooth discovery, the baseband link, and the
-  RFCOMM `Session` that implements `Requester`.
+  RFCOMM `Session` that implements `Requester`; CoreBluetooth listening for
+  advertisements (`Nearby`).
 - `Sources/bosectl`: the command-line interface (swift-argument-parser).
 
 ## Conventions
