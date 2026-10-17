@@ -17,7 +17,7 @@ jobs:
     # here, which is why one job can produce every artifact.
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Test
         run: swift test
@@ -44,7 +44,7 @@ jobs:
           ./dist/bosectl-macos-arm64 --version
           ls -lh dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bosectl-macos
           path: dist/*
