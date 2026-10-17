@@ -41,7 +41,7 @@ struct Bosectl: ParsableCommand {
 /// after it.
 func hoistGlobalOptions(_ args: [String]) -> [String]
 {
-    let flags: Set<String> = ["--json", "--auto-connect", "--trace"]
+    let flags: Set<String> = ["--json", "--auto-connect", "--trace", "--le"]
     let valued: Set<String> = ["--mac", "--device", "--color", "--timeout"]
     var leading: [String] = []
     var i = 0

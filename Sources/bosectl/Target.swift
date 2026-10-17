@@ -27,6 +27,10 @@ struct GlobalOptions: ParsableArguments {
     @Option(name: .long, help: ArgumentHelp("Seconds to wait for each reply.", valueName: "seconds"))
     var timeout: Double = 3
 
+    /// Experimental: BMAP over Bluetooth LE instead of the Classic channel.
+    @Flag(name: .long, help: .hidden)
+    var le = false
+
     func apply()
     {
         Output.json = json

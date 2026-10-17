@@ -291,6 +291,34 @@ macOS hides LE addresses from applications, so a heard device cannot be
 matched to the paired one by address; CoreBluetooth gives a per-Mac
 identifier instead. The advertisement carries the headphones' name.
 
+* BMAP over Bluetooth LE
+
+The same packets also travel over a GATT service, =FEBE=. It has two characteristics, both
+readable, writable with and without response, and notifying:
+
+- =C65B8F2F-AEE2-4C89-B758-BC4892D6F2D8=, which needs an encrypted link. It
+  worked on a Mac paired over Classic with no pairing prompt, presumably
+  because the Classic bond carries over to LE. Requests written here are answered by notifications on it.
+- =D417C028-9818-4354-99D1-2AC09D074591=. Writing to it failed with an
+  unknown ATT error.
+
+Every write and every notification carries one segment of a packet, behind a
+one-byte segment header: the high nibble is the index of the last segment and
+the low nibble this segment's index, so a packet that fits takes header =0x00=.
+Each segment holds up to 19 packet bytes. The battery request and its answer
+look like this on the wire:
+
+#+begin_example
+-> 00 02 02 01 00
+<- 00 02 02 03 04 32 ff ff 00     (header 00, then 2.2 STATUS: 50%)
+#+end_example
+
+Using LE needs no Classic link and never moves the Mac's audio. An LE
+connection from the Mac sometimes fails to come up right after a Classic
+session; trying again a moment later worked.
+
+The Bluetooth LE route is experimental and hidden behind =--le=.
+
 * What is not known yet
 
 - The unknown bytes in the mode record, 5.1 and 4.5.

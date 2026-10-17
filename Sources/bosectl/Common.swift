@@ -9,17 +9,48 @@ import Foundation
 /// errors into failures.
 func withHeadphones<T>(_ options: GlobalOptions, _ body: (Headphones, Target) throws -> T) throws -> T
 {
-    try withSession(options) { session, target in
-        let headphones = Headphones(session, timeout: options.timeout)
-        do {
-            return try body(headphones, target)
-        } catch let error as UsageError {
-            throw Failure.usage(error.description)
-        } catch let error as ParseError {
-            throw Failure(error.description)
-        } catch let error as NotApplied {
-            throw Failure(error.description)
-        }
+    if options.le { return try withLESession(options, body) }
+    return try withSession(options) { session, target in
+        try runMappingErrors { try body(Headphones(session, timeout: options.timeout), target) }
+    }
+}
+
+/// The same over Bluetooth LE. It needs no Classic link and never takes the
+/// Mac's audio, so it does not check for one.
+func withLESession<T>(_ options: GlobalOptions, _ body: (Headphones, Target) throws -> T) throws -> T
+{
+    let target = try Target.resolve(options)
+    let session: LESession
+    do { session = try LESession(name: target.device.name.isEmpty ? nil : target.device.name) }
+    catch { throw Failure("over LE: \(error)") }
+    defer { session.close() }
+    if options.trace {
+        for note in session.notes { Output.trace("LE: " + note) }
+        session.onTraffic = { outgoing, packet in Output.trace((outgoing ? "-> " : "<- ") + packet.description) }
+        session.onRaw = { Output.trace("LE raw: " + $0) }
+    }
+    do {
+        return try runMappingErrors { try body(Headphones(session, timeout: options.timeout), target) }
+    } catch let error as BluetoothError {
+        throw Failure("over LE: \(error)")
+    } catch let error as LEError {
+        throw Failure("over LE: \(error)")
+    } catch let error as DeviceError {
+        throw Failure(error.description)
+    }
+}
+
+/// Library errors as the failures the CLI reports.
+func runMappingErrors<T>(_ body: () throws -> T) throws -> T
+{
+    do {
+        return try body()
+    } catch let error as UsageError {
+        throw Failure.usage(error.description)
+    } catch let error as ParseError {
+        throw Failure(error.description)
+    } catch let error as NotApplied {
+        throw Failure(error.description)
     }
 }
 

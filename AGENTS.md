@@ -21,7 +21,7 @@ commit of a change, not while iterating.
   scripted and simulated devices.
 - `Sources/BMAPBluetooth`: IOBluetooth discovery, the baseband link, and the
   RFCOMM `Session` that implements `Requester`; CoreBluetooth listening for
-  advertisements (`Nearby`).
+  advertisements (`Nearby`) and the experimental BMAP-over-LE `LESession`.
 - `Sources/bosectl`: the command-line interface (swift-argument-parser).
 
 ## Conventions
