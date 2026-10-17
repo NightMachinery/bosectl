@@ -115,6 +115,10 @@ func withSession<T>(_ options: GlobalOptions, _ body: (Session, Target) throws -
             default:
                 break
             }
+            if case .channelOpenFailed = error {
+                // What it usually is in practice, and the error code says nothing.
+                throw Failure("\(error); another client may hold it, such as a running 'bosectl watch'")
+            }
             throw Failure(error.description)
         } catch let error as DeviceError {
             throw Failure(error.description)

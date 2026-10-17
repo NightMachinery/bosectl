@@ -185,9 +185,9 @@ address. =bosectl devices= lists what is paired.
 
 * Things to know
 
-- *One control session at a time.* A second process that opens the channel
-  while =watch= runs takes it over, and =watch= then hears nothing more. The
-  Bose app on a phone linked to the same headphones also competes for it.
+- *One control session at a time.* While =watch= runs, other =bosectl=
+  commands may fail to open the channel; stop the watch first. The Bose app
+  on a phone linked to the same headphones also competes for it.
 - *Voice prompts are read-only on firmware 10.12.12.* The headphones
   acknowledge a change and keep the old value; =prompts= then fails rather
   than report success. Every write is checked this way: the headphones echo

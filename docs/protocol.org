@@ -26,8 +26,10 @@ The first write on a fresh channel sometimes fails with =kIOReturnUnderrun=. A
 refused write sends nothing, so retrying it is safe; =bosectl= tries four
 times, 0.1 s apart and lengthening.
 
-The headphones serve one control session at a time. A second process that
-opens the channel takes it over: the first one's notifications stop.
+The headphones serve one control session at a time. While one process holds
+the channel, another on the same Mac usually fails to open it, with
+=kIOReturnError= (0xe00002bc); once it opened after a retry. The same code
+also shows up briefly after a session closes, which is why opening is retried.
 
 * Framing
 
