@@ -27,9 +27,10 @@ refused write sends nothing, so retrying it is safe; =bosectl= tries four
 times, 0.1 s apart and lengthening.
 
 The headphones serve one control session at a time. While one process holds
-the channel, another on the same Mac usually fails to open it, with
-=kIOReturnError= (0xe00002bc); once it opened after a retry. The same code
-also shows up briefly after a session closes, which is why opening is retried.
+the channel, another on the same Mac fails to open it with =kIOReturnError=
+(0xe00002bc), at least at first: retried for a second or two, it sometimes
+gets through and sometimes does not. The same code shows up briefly after a
+session closes, which is why opening is retried.
 
 * Framing
 
