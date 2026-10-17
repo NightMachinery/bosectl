@@ -43,6 +43,11 @@ public enum Function {
     // Block 7: control
     public static let power = Address(7, 4)
 
+    // Block 9: notifications
+    /// SETGET [1 enable / 2 disable / 0 overwrite, block mask (big-endian
+    /// u32, bit n = block n)]. Lasts as long as the channel.
+    public static let notifyBlocks = Address(9, 2)
+
     // Block 18: authentication (its GETs are open)
     public static let codename = Address(18, 12)
     public static let platform = Address(18, 13)

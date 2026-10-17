@@ -438,6 +438,17 @@ public final class Headphones {
         try start(Function.disconnectHost, bytes, collect: .acknowledged)
     }
 
+    // MARK: Notifications
+
+    /// Asks the headphones to report changes to these function blocks on
+    /// this channel, as STATUS packets. They report nothing until asked.
+    public func subscribe(blocks: [UInt8]) throws
+    {
+        let mask = blocks.reduce(UInt32(0)) { $0 | 1 << UInt32($1) }
+        let bytes = (0 ..< 4).map { UInt8(truncatingIfNeeded: mask >> (8 * (3 - $0))) }
+        try setGet(Function.notifyBlocks, [0x01] + bytes)
+    }
+
     // MARK: Pairing and power
 
     public func enterPairingMode() throws

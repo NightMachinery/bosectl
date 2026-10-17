@@ -16,6 +16,9 @@ struct Watch: ParsableCommand {
         """
     )
 
+    /// Settings, status, device management, audio management, audio modes.
+    static let blocks: [UInt8] = [1, 2, 4, 5, 31]
+
     @OptionGroup var global: GlobalOptions
 
     @Option(help: ArgumentHelp("Stop after this many seconds (default: run until interrupted).", valueName: "seconds"))
@@ -24,7 +27,12 @@ struct Watch: ParsableCommand {
     func run() throws
     {
         global.apply()
+        signal(SIGINT) { _ in watchInterrupted = true }
+        signal(SIGTERM) { _ in watchInterrupted = true }
         try withSession(global) { session, _ in
+            let hp = Headphones(session, timeout: global.timeout)
+            do { try hp.subscribe(blocks: Watch.blocks) }
+            catch { throw Failure("could not subscribe to notifications: \(error)") }
             let previous = session.onTraffic
             session.onTraffic = { outgoing, packet in
                 previous?(outgoing, packet)
@@ -33,8 +41,8 @@ struct Watch: ParsableCommand {
                 fflush(stdout)
             }
             let end = duration.map { Date().addingTimeInterval($0) } ?? .distantFuture
-            while Date() < end {
-                _ = session.listen(for: min(1, end.timeIntervalSinceNow))
+            while Date() < end, !watchInterrupted {
+                _ = session.listen(for: min(0.25, end.timeIntervalSinceNow))
                 if session.isClosed {
                     throw Failure("the headphones closed the channel")
                 }
@@ -42,6 +50,9 @@ struct Watch: ParsableCommand {
         }
     }
 }
+
+/// Set from the signal handler, so watch can close the channel on its way out.
+var watchInterrupted = false
 
 /// A received packet as JSON, with a decoded `value` where the layout is known.
 func eventJSON(_ packet: Packet) -> JSON

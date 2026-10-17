@@ -99,7 +99,9 @@ public struct AnswerCollector {
         answers.append(packet)
         switch collect {
         case .one, .acknowledged:
-            if packet.address == request.address { done = true }
+            // A START is answered by RESULT; a STATUS for its address is a
+            // change notification that can arrive first.
+            if packet.address == request.address, packet.op == .result || request.op != .start { done = true }
         case .all:
             break
         }
