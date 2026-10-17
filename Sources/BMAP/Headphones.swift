@@ -191,6 +191,71 @@ public final class Headphones {
         try ModeConfig.parse(setGet(Function.modeConfig, mode.build()))
     }
 
+    // MARK: Custom modes
+
+    /// Creates the custom mode `name` in the first empty slot, or updates it
+    /// if it exists; `change` edits the stored settings. Returns the record
+    /// the headphones confirmed.
+    @discardableResult
+    public func saveCustomMode(_ name: String, change: (inout ModeConfig) -> Void) throws -> ModeConfig
+    {
+        let all = try modes()
+        let wanted = name.trimmingCharacters(in: .whitespaces)
+        var mode: ModeConfig
+        if let existing = all.first(where: { $0.editable && !$0.isEmpty && $0.name.lowercased() == wanted.lowercased() }) {
+            mode = existing
+        } else {
+            try refusePresetName(wanted, all)
+            guard let slot = all.first(where: \.isEmpty)?.index
+                ?? Presets.customSlots.first(where: { i in !all.contains { $0.index == i } })
+            else {
+                throw UsageError("all \(Presets.customSlots.count) custom slots are taken; delete a custom mode first")
+            }
+            // A new mode starts from what Quiet does.
+            mode = ModeConfig(
+                index: slot, prompt: [0, 0], editable: true, configured: true, name: wanted,
+                cncLevel: 0, autoCNC: false, spatial: Spatial.off.rawValue, windBlock: false, ancEnabled: true
+            )
+        }
+        let previousName = mode.name
+        change(&mode)
+        if mode.name.lowercased() != previousName.lowercased() {
+            try refusePresetName(mode.name, all)
+            if all.contains(where: { $0.index != mode.index && !$0.isEmpty && $0.name.lowercased() == mode.name.lowercased() }) {
+                throw UsageError("a mode named '\(mode.name)' already exists")
+            }
+        }
+        guard (0 ... 10).contains(mode.cncLevel) else { throw UsageError("the noise level must be 0 to 10") }
+        guard !mode.name.isEmpty, Array(mode.name.utf8).count <= 31 else {
+            throw UsageError("a mode name must be 1 to 31 bytes of UTF-8")
+        }
+        return try writeMode(mode)
+    }
+
+    /// Empties the custom mode's slot.
+    public func deleteCustomMode(_ name: String) throws -> UInt8
+    {
+        let all = try modes()
+        guard let mode = all.first(where: { $0.editable && !$0.isEmpty && $0.name.lowercased() == name.lowercased() }) else {
+            if all.contains(where: { !$0.editable && $0.displayNameForMatching == name.lowercased() }) {
+                throw UsageError("'\(name)' is a preset and cannot be deleted")
+            }
+            throw UsageError("no custom mode named '\(name)'")
+        }
+        try writeMode(.empty(index: mode.index))
+        return mode.index
+    }
+
+    /// Switching resolves preset names first, so a custom mode named like a
+    /// preset could never be selected by name.
+    private func refusePresetName(_ name: String, _ all: [ModeConfig]) throws
+    {
+        let lowered = name.lowercased()
+        if Presets.index(named: lowered) != nil || all.contains(where: { !$0.editable && $0.displayNameForMatching == lowered }) {
+            throw UsageError("'\(name)' is a preset's name; choose another")
+        }
+    }
+
     public func audioSettings() throws -> AudioSettings
     {
         try AudioSettings.parse(get(Function.audioSettings))

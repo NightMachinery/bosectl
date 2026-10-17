@@ -86,24 +86,47 @@ struct Modes: ParsableCommand {
     func run() throws
     {
         global.apply()
-        let (modes, current) = try withHeadphones(global) { hp, _ in
-            (try hp.modes(), try? hp.currentModeIndex())
-        }
-        let shown = modes.filter { all || !$0.isEmpty }
-        Output.emit(.object([
-            ("current", .optional(current.map(Int.init))),
-            ("modes", .array(shown.map(\.json))),
-        ])) {
-            shown.map { m in
-                let marker = m.index == current ? "*" : " "
-                let kind = m.editable ? (m.isEmpty ? "empty " : "custom") : "preset"
-                var line = "\(marker) \(m.index < 10 ? " " : "")\(m.index)  \(kind)  \(m.displayName)"
-                if !m.isEmpty {
-                    line += "  (cnc \(m.cncLevel), anc \(onOff(m.ancEnabled)), wind \(onOff(m.windBlock)), spatial \(m.spatialName))"
-                }
-                return line
-            }.joined(separator: "\n")
-        }
+        try listModes(global, all: all)
+    }
+}
+
+struct ProfileList: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "list",
+        abstract: "List every mode slot: the presets and the custom modes."
+    )
+
+    @OptionGroup var global: GlobalOptions
+
+    @Flag(name: .long, help: "Include empty custom slots.")
+    var all = false
+
+    func run() throws
+    {
+        global.apply()
+        try listModes(global, all: all)
+    }
+}
+
+func listModes(_ global: GlobalOptions, all: Bool) throws
+{
+    let (modes, current) = try withHeadphones(global) { hp, _ in
+        (try hp.modes(), try? hp.currentModeIndex())
+    }
+    let shown = modes.filter { all || !$0.isEmpty }
+    Output.emit(.object([
+        ("current", .optional(current.map(Int.init))),
+        ("modes", .array(shown.map(\.json))),
+    ])) {
+        shown.map { m in
+            let marker = m.index == current ? "*" : " "
+            let kind = m.editable ? (m.isEmpty ? "empty " : "custom") : "preset"
+            var line = "\(marker) \(m.index < 10 ? " " : "")\(m.index)  \(kind)  \(m.displayName)"
+            if !m.isEmpty {
+                line += "  (cnc \(m.cncLevel), anc \(onOff(m.ancEnabled)), wind \(onOff(m.windBlock)), spatial \(m.spatialName))"
+            }
+            return line
+        }.joined(separator: "\n")
     }
 }
 

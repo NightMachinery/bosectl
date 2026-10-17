@@ -98,6 +98,14 @@ public struct ModeConfig: Equatable, Sendable {
         return out
     }
 
+    /// The name to match user input against: the preset's fixed name for a
+    /// preset, the stored name otherwise; lowercased.
+    var displayNameForMatching: String
+    {
+        if !editable, let preset = Presets.name(of: index) { return preset }
+        return name.lowercased()
+    }
+
     /// What a deleted slot is written back to.
     public static func empty(index: UInt8) -> ModeConfig
     {

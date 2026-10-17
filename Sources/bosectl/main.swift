@@ -20,7 +20,7 @@ struct Bosectl: ParsableCommand {
         version: version,
         subcommands: [
             Status.self, BatteryCommand.self, Info.self,
-            Mode.self, Modes.self,
+            Mode.self, Modes.self, Profile.self,
             PresetShortcut<QuietPreset>.self, PresetShortcut<AwarePreset>.self,
             PresetShortcut<ImmersionPreset>.self, PresetShortcut<CinemaPreset>.self,
             CNC.self, ANC.self, Wind.self, AutoCNC.self, SpatialCommand.self,
