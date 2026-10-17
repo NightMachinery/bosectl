@@ -195,7 +195,8 @@ Without a subscription the headphones push nothing. 9.2 SETGET
 =[op, mask]= subscribes, where =op= is 1 enable, 2 disable or 0 overwrite and
 =mask= is a big-endian u32 in which bit /n/ means block /n/. The subscription
 lasts as long as the channel. =bosectl watch= subscribes to blocks 1, 2, 4, 5
-and 31.
+and 31, over Bluetooth LE unless that cannot connect, so that it does not hold
+the RFCOMM channel.
 
 ** Block 18: authentication
 

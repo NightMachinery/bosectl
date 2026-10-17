@@ -11,9 +11,9 @@ struct Watch: ParsableCommand {
         discussion: """
         The headphones report changes made elsewhere (the buttons, the Bose app,
         another host) on the open channel. This keeps the channel open and
-        prints each report, decoded where the layout is known. It holds the
-        Classic control channel for as long as it runs (other commands then
-        go over Bluetooth LE).
+        prints each report, decoded where the layout is known. It listens over
+        Bluetooth LE, which leaves the Classic control channel to other
+        commands, and uses the Classic channel only when LE cannot connect.
         """
     )
 
@@ -25,12 +25,16 @@ struct Watch: ParsableCommand {
     @Option(help: ArgumentHelp("Stop after this many seconds (default: run until interrupted).", valueName: "seconds"))
     var duration: Double?
 
+    @Flag(help: "Start on the Classic channel; while this runs, other commands then take the slower LE route.")
+    var classic = false
+
     func run() throws
     {
         global.apply()
+        if classic, global.le { throw Failure.usage("--classic and --le contradict each other") }
         signal(SIGINT) { _ in watchInterrupted = true }
         signal(SIGTERM) { _ in watchInterrupted = true }
-        try withChannel(global) { session, _ in
+        try withChannel(global, first: classic ? .classic : .le) { session, _ in
             let hp = Headphones(session, timeout: global.timeout)
             do { try hp.subscribe(blocks: Watch.blocks) }
             catch { throw Failure("could not subscribe to notifications: \(error)") }

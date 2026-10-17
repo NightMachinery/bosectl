@@ -107,7 +107,7 @@ bosectl connect
 bosectl disconnect
 
 # protocol work
-bosectl watch                          # change notifications, as JSON lines
+bosectl watch                          # change notifications, as JSON lines (over LE)
 bosectl dump                           # GET every known function
 bosectl raw 31.3 get                   # one raw packet
 #+end_src
@@ -229,8 +229,9 @@ address. =bosectl devices= lists what is paired.
 * Things to know
 
 - *The Classic control channel takes one client at a time, across hosts.* A
-  running =watch=, or a phone with the Bose app active, holds it, and the
-  headphones refuse it to everyone else. =bosectl= then says so on stderr and
+  phone with the Bose app active, or a running =watch --classic=, holds it,
+  and the headphones refuse it to everyone else. (A plain =watch= listens over
+  Bluetooth LE, and uses the Classic channel only when LE cannot connect.) =bosectl= then says so on stderr and
   goes over Bluetooth LE instead, which the headphones serve separately: with
   the Bose app active on a phone, commands still worked that way. The
   Bluetooth stack takes about 5 s to report the refusal, so such a command

@@ -75,39 +75,91 @@ struct Target {
     var isLinked: Bool { Link.isConnected(device.address) }
 }
 
-/// Opens the control channel and runs `body`: the Classic RFCOMM channel, or
-/// Bluetooth LE with --le or when another client holds the Classic one. Never
-/// brings the link up on its own: without --auto-connect a disconnected target
-/// fails at once with exit status 3, and LE is not tried.
-func withChannel<T>(_ options: GlobalOptions, _ body: (any ControlChannel, Target) throws -> T) throws -> T
+/// The transport withChannel starts on.
+enum Transport {
+    case classic, le
+}
+
+/// Opens the control channel and runs `body`. Commands start on the Classic
+/// RFCOMM channel and go over Bluetooth LE when another client holds it;
+/// `watch` starts on LE, so it never holds the Classic channel, and falls
+/// back to Classic when LE cannot connect. --le uses LE alone and needs no
+/// Classic link. Otherwise nothing brings the link up on its own: without
+/// --auto-connect a disconnected target fails at once with exit status 3.
+func withChannel<T>(
+    _ options: GlobalOptions, first: Transport = .classic, _ body: (any ControlChannel, Target) throws -> T
+) throws -> T
 {
     do {
         if options.le { return try withLESession(options, body) }
-        do {
-            return try withSession(options) { try body($0, $1) }
-        } catch let busy as ChannelBusy {
-            // A refusal takes the stack about 5 s to report, so rather than
-            // ask again at once, try LE (1 to 2 s), and the Classic channel
-            // once more only if LE fails: the refusal is sometimes brief.
-            Output.note("\(busy.error); trying Bluetooth LE")
-            do {
-                return try withLESession(options, body)
-            } catch let unreachable as LEUnreachable {
-                Output.note("Bluetooth LE did not work (\(unreachable.reason)); trying the Classic channel again")
-                do {
-                    return try withSession(options) { try body($0, $1) }
-                } catch let again as ChannelBusy {
-                    throw Failure(
-                        "\(again.error), and Bluetooth LE did not work either; "
-                            + "another client may hold the channel: a running 'bosectl watch', "
-                            + "or a linked phone (close the Bose app or turn off the phone's Bluetooth)"
-                    )
-                }
-            }
+        switch first {
+        case .classic: return try classicThenLE(options, body)
+        case .le: return try leThenClassic(options, body)
         }
     } catch let unreachable as LEUnreachable {
         throw Failure("over Bluetooth LE: \(unreachable.reason)")
     }
+}
+
+private func classicThenLE<T>(_ options: GlobalOptions, _ body: (any ControlChannel, Target) throws -> T) throws -> T
+{
+    do {
+        return try withSession(options) { try body($0, $1) }
+    } catch let busy as ChannelBusy {
+        // A refusal takes the stack about 5 s to report, so rather than ask
+        // again at once, try LE (1 to 2 s), and the Classic channel once more
+        // only if LE fails: the refusal is sometimes brief.
+        Output.note("\(busy.error); trying Bluetooth LE")
+        do {
+            return try withLESession(options, body)
+        } catch let unreachable as LEUnreachable {
+            Output.note("Bluetooth LE did not work (\(unreachable.reason)); trying the Classic channel again")
+            do {
+                return try withSession(options) { try body($0, $1) }
+            } catch let again as ChannelBusy {
+                throw bothFailed(again.error)
+            }
+        }
+    }
+}
+
+private func leThenClassic<T>(_ options: GlobalOptions, _ body: (any ControlChannel, Target) throws -> T) throws -> T
+{
+    try requireLink(Target.resolve(options), options)
+    do {
+        return try withLESession(options, body)
+    } catch let unreachable as LEUnreachable {
+        Output.note("Bluetooth LE did not work (\(unreachable.reason)); using the Classic channel")
+        do {
+            return try withSession(options) { try body($0, $1) }
+        } catch let busy as ChannelBusy {
+            throw bothFailed(busy.error)
+        }
+    }
+}
+
+private func bothFailed(_ error: BluetoothError) -> Failure
+{
+    Failure(
+        "\(error), and Bluetooth LE did not work either; "
+            + "another client may hold the channel: a running 'bosectl watch --classic', "
+            + "or a linked phone (close the Bose app or turn off the phone's Bluetooth)"
+    )
+}
+
+/// Fails with exit status 3 when this Mac is not linked to the target, or
+/// links it first under --auto-connect.
+private func requireLink(_ target: Target, _ options: GlobalOptions) throws
+{
+    guard !target.isLinked else { return }
+    guard options.autoConnect else {
+        throw Failure(
+            "\(target.label) is not connected (run 'bosectl connect', or pass --auto-connect)",
+            status: Exit.notConnected
+        )
+    }
+    Output.note("connecting \(target.label)...")
+    try Link.open(target.device.address)
 }
 
 /// The Classic channel would not open, though the link is up. No request
@@ -155,16 +207,7 @@ private func withLESession<T>(_ options: GlobalOptions, _ body: (any ControlChan
 private func withSession<T>(_ options: GlobalOptions, _ body: (Session, Target) throws -> T) throws -> T
 {
     let target = try Target.resolve(options)
-    if !target.isLinked {
-        guard options.autoConnect else {
-            throw Failure(
-                "\(target.label) is not connected (run 'bosectl connect', or pass --auto-connect)",
-                status: Exit.notConnected
-            )
-        }
-        Output.note("connecting \(target.label)...")
-        try Link.open(target.device.address)
-    }
+    try requireLink(target, options)
 
     // The channel can be briefly unavailable right after the link comes up,
     // so opening is retried. A refused open is left to withChannel.
