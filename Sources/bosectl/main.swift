@@ -29,7 +29,7 @@ struct Bosectl: ParsableCommand {
             Prompts.self, Buttons.self,
             Source.self, Route.self, Pair.self, PowerOff.self,
             Devices.self, LinkState.self, Connect.self, Disconnect.self,
-            Raw.self,
+            Watch.self, Dump.self, Raw.self,
         ]
     )
 }

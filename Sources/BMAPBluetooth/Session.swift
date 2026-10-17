@@ -21,6 +21,9 @@ public final class Session: NSObject, IOBluetoothRFCOMMChannelDelegate, Requeste
     private var sdpStatus: IOReturn?
     private var closed = false
 
+    /// The headphones closed the channel (or the link dropped).
+    public var isClosed: Bool { closed || channel == nil }
+
     /// Every packet sent and received, in order, for --trace and `raw`.
     public var onTraffic: ((_ outgoing: Bool, _ packet: Packet) -> Void)?
     /// Packets that arrived without answering a pending request.
