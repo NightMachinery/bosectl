@@ -228,9 +228,12 @@ address. =bosectl devices= lists what is paired.
 
 * Things to know
 
-- *One control session at a time.* While =watch= runs, other =bosectl=
-  commands may fail to open the channel; stop the watch first. The Bose app
-  on a phone linked to the same headphones also competes for it.
+- *One control session at a time, across hosts.* While =watch= runs, other
+  =bosectl= commands may fail to open the channel; stop the watch first. A
+  linked phone can hold it too: with the Bose app active on one, every command
+  failed with "could not open the BMAP channel" until the phone's Bluetooth
+  went off. The headphones also stop advertising while a phone holds a
+  Bluetooth LE connection to them, so =nearby= hears nothing then.
 - *Voice prompts are read-only on firmware 10.12.12.* The headphones
   acknowledge a change and keep the old value; =prompts= then fails rather
   than report success. Every write is checked this way: the headphones echo

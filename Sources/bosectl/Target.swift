@@ -117,7 +117,10 @@ func withSession<T>(_ options: GlobalOptions, _ body: (Session, Target) throws -
             }
             if case .channelOpenFailed = error {
                 // What it usually is in practice, and the error code says nothing.
-                throw Failure("\(error); another client may hold it, such as a running 'bosectl watch'")
+                throw Failure(
+                    "\(error); another client may hold it: a running 'bosectl watch', "
+                        + "or a linked phone (close the Bose app or turn off the phone's Bluetooth)"
+                )
             }
             throw Failure(error.description)
         } catch let error as DeviceError {

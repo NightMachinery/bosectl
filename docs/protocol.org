@@ -26,8 +26,11 @@ The first write on a fresh channel sometimes fails with =kIOReturnUnderrun=. A
 refused write sends nothing, so retrying it is safe; =bosectl= tries four
 times, 0.1 s apart and lengthening.
 
-The headphones serve one control session at a time. While one process holds
-the channel, another on the same Mac fails to open it with =kIOReturnError=
+The headphones serve one control session at a time, across hosts: while a
+linked phone (presumably the Bose app) held it, every attempt from the Mac
+failed the same way until the phone's Bluetooth went off, and the headphones
+stopped advertising meanwhile. While one process holds the channel, another
+on the same Mac fails to open it with =kIOReturnError=
 (0xe00002bc), at least at first: retried for a second or two, it sometimes
 gets through and sometimes does not. The same code shows up briefly after a
 session closes, which is why opening is retried.
